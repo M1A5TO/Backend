@@ -3,3 +3,14 @@ uvicorn[standard]
 redis
 psycopg2-binary
 pydantic
+pillow
+loguru
+sqlalchemy
+requests
+alembic
+python-multipart
+pytest
+geoalchemy2
+httpx
+python-dotenv
+Pillow[webp]

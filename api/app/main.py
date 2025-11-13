@@ -3,7 +3,7 @@ import json
 import redis
 import psycopg2
 from decimal import Decimal
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from contextlib import contextmanager
@@ -11,23 +11,15 @@ from psycopg2.pool import SimpleConnectionPool
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg2.extras import RealDictCursor, Json
 
+from sqlalchemy.orm import Session
+from fastapi.responses import FileResponse
+import uuid
+import mimetypes
 
-# --- PostgreSQL ---
-PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
-PG_PORT = int(os.getenv("POSTGRES_PORT", 5432))
-PG_USER = os.getenv("POSTGRES_USER", "user")
-PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
-PG_DB = os.getenv("POSTGRES_DB", "db")
+from .db import get_db_session, ensure_database
+from .models import Apartment, Photo
+from .common import optimize_image_to_webp
 
-pool = SimpleConnectionPool(
-    minconn=1,
-    maxconn=10,
-    host=PG_HOST,
-    port=PG_PORT,
-    user=PG_USER,
-    password=PG_PASSWORD,
-    dbname=PG_DB,
-)
 
 
 # --- Redis ---
@@ -55,224 +47,277 @@ app.add_middleware(
 )
 
 
-# --- Models ---
-class ApartmentCreate(BaseModel):
-    listing_id: str
-    name: str
-    price: float  # stored as NUMERIC(12,2) in DB; we cast to float for API
-    poi: Optional[Dict[str, Any]] = None
+# --- Startup: ensure DB tables/migrations ---
+@app.on_event("startup")
+def on_startup():
+    ensure_database()
+    # Ensure media directory exists
+    os.makedirs(os.getenv("MEDIA_ROOT", "/media/photos"), exist_ok=True)
 
 
-class Apartment(ApartmentCreate):
+# --- Schemas ---
+class ApartmentBase(BaseModel):
+    source_website: str
+    source_id: str
+    source_url: str
+    price: Optional[Decimal] = None
+    currency: Optional[str] = "PLN"
+    room_num: Optional[int] = None
+    footage: Optional[Decimal] = None
+    price_per_m2: Optional[Decimal] = None
+    city: Optional[str] = None
+    description: Optional[str] = None
+    photo_attractiveness: Optional[int] = None
+    student_attractiveness: Optional[int] = None
+    single_attractiveness: Optional[int] = None
+    dog_owner_attractiveness: Optional[int] = None
+    universal_attractiveness: Optional[int] = None
+    family_attractiveness: Optional[int] = None
+    poi_desc: Optional[str] = None
+    price_desc: Optional[str] = None
+    size_desc: Optional[str] = None
+    style: Optional[str] = None
+
+
+class ApartmentCreate(ApartmentBase):
+    pass
+
+
+class ApartmentUpdate(BaseModel):
+    source_url: Optional[str] = None
+    price: Optional[Decimal] = None
+    currency: Optional[str] = None
+    room_num: Optional[int] = None
+    footage: Optional[Decimal] = None
+    price_per_m2: Optional[Decimal] = None
+    city: Optional[str] = None
+    description: Optional[str] = None
+    photo_attractiveness: Optional[int] = None
+    student_attractiveness: Optional[int] = None
+    single_attractiveness: Optional[int] = None
+    dog_owner_attractiveness: Optional[int] = None
+    universal_attractiveness: Optional[int] = None
+    family_attractiveness: Optional[int] = None
+    poi_desc: Optional[str] = None
+    price_desc: Optional[str] = None
+    size_desc: Optional[str] = None
+    style: Optional[str] = None
+
+
+class ApartmentOut(ApartmentBase):
     id: int
 
-
-# --- Helpers ---
-def _to_jsonable(value):
-    if isinstance(value, Decimal):
-        return float(value)
-    if isinstance(value, list):
-        return [_to_jsonable(v) for v in value]
-    if isinstance(value, dict):
-        return {k: _to_jsonable(v) for k, v in value.items()}
-    return value
+    class Config:
+        from_attributes = True
 
 
-@contextmanager
-def get_db_connection():
-    conn = pool.getconn()
+class PhotoBase(BaseModel):
+    apartment_id: int
+
+
+class PhotoCreate(PhotoBase):
+    pass
+
+
+class PhotoUpdate(BaseModel):
+    path: Optional[str] = None
+
+
+class PhotoOut(PhotoBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+# --- CRUD: Apartments ---
+@app.get("/apartments", response_model=List[ApartmentOut])
+def list_apartments(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session)):
+    return db.query(Apartment).offset(skip).limit(limit).all()
+
+
+@app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
+def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
+    obj = db.query(Apartment).get(apartment_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    return obj
+
+
+@app.post("/apartments", response_model=ApartmentOut, status_code=201)
+def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_session)):
+    obj = Apartment(**payload.dict())
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.put("/apartments/{apartment_id}", response_model=ApartmentOut)
+def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = Depends(get_db_session)):
+    obj = db.query(Apartment).get(apartment_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    for k, v in payload.dict(exclude_unset=True).items():
+        setattr(obj, k, v)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+@app.delete("/apartments/{apartment_id}", status_code=204)
+def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
+    obj = db.query(Apartment).get(apartment_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Apartment not found")
+    db.delete(obj)
+    db.commit()
+    return None
+
+
+# --- CRUD: Photos ---
+@app.get("/photos", response_model=List[PhotoOut])
+def list_photos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session)):
+    return db.query(Photo).offset(skip).limit(limit).all()
+
+
+@app.get("/photos/{photo_id}")
+def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
+    obj = db.query(Photo).get(photo_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    if not obj.path or not os.path.isfile(obj.path):
+        raise HTTPException(status_code=404, detail="Photo file missing")
+    media_type = mimetypes.guess_type(obj.path)[0] or "application/octet-stream"
+    return FileResponse(path=obj.path, media_type=media_type)
+
+
+@app.post("/photos", status_code=201)
+async def create_photo(
+    apartment_id: int = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db_session),
+):
+    # Persist file in /media/photos/{apartment_id}/{index}{ext}
+    media_root = os.getenv("MEDIA_ROOT", "/media/photos")
+    apartment_dir = os.path.join(media_root, str(apartment_id))
+    os.makedirs(apartment_dir, exist_ok=True)
+
+    existing = [f for f in os.listdir(apartment_dir) if os.path.isfile(os.path.join(apartment_dir, f))]
+    indices = []
+    for name in existing:
+        base, _ext = os.path.splitext(name)
+        try:
+            indices.append(int(base))
+        except ValueError:
+            continue
+    next_index = (max(indices) + 1) if indices else 0
+
+    ext = os.path.splitext(file.filename or "")[1] or ""
+    base_path = os.path.join(apartment_dir, f"{next_index}")
+    temp_path = base_path + ext
+
     try:
-        yield conn
+        with open(temp_path, "wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
     finally:
-        # Do NOT close a pooled connection; return it to the pool
-        pool.putconn(conn)
+        await file.close()
+
+    # Optimize to webp; returns final path or None
+    optimized_path = optimize_image_to_webp(temp_path)
+    if not optimized_path:
+        # cleanup
+        try:
+            if os.path.isfile(temp_path):
+                os.remove(temp_path)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail="Invalid image or optimization failed")
+
+    obj = Photo(apartment_id=apartment_id, path=optimized_path)
+    db.add(obj)
+    db.commit()
+    db.refresh(obj)
+    return {"id": obj.id, "apartment_id": obj.apartment_id}
 
 
-def fetch_from_db(query: str, params=None):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(query, params)
-                rows = cur.fetchall()
-                return [dict(row) for row in rows]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+@app.put("/photos/{photo_id}")
+async def update_photo(
+    photo_id: int,
+    apartment_id: Optional[int] = Form(None),
+    file: Optional[UploadFile] = File(None),
+    db: Session = Depends(get_db_session),
+):
+    obj = db.query(Photo).get(photo_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Photo not found")
 
+    # Update apartment relation if provided
+    if apartment_id is not None:
+        obj.apartment_id = apartment_id
 
-# --- Endpoints ---
-@app.get("/apartments", response_model=List[Apartment])
-async def get_apartments():
-    try:
-        cache_key = "apartments:all"
-        cached = r.get(cache_key)
-        if cached:
-            return json.loads(cached)
+    # Replace file if provided
+    if file is not None:
+        media_root = os.getenv("MEDIA_ROOT", "/media/photos")
+        apartment_dir = os.path.join(media_root, str(obj.apartment_id))
+        os.makedirs(apartment_dir, exist_ok=True)
 
-        result = fetch_from_db("SELECT id, listing_id, name, price, poi FROM apartments")
-        if result:
-            # Ensure Decimals and other types are JSON-safe for Redis cache
-            r.set(cache_key, json.dumps(_to_jsonable(result)), ex=60)
-        return result
-    except redis.RedisError as e:
-        raise HTTPException(status_code=500, detail=f"Cache error: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        existing = [f for f in os.listdir(apartment_dir) if os.path.isfile(os.path.join(apartment_dir, f))]
+        indices = []
+        for name in existing:
+            base, _ext = os.path.splitext(name)
+            try:
+                indices.append(int(base))
+            except ValueError:
+                continue
+        next_index = (max(indices) + 1) if indices else 0
 
-
-@app.get("/apartments/{apartment_id}", response_model=Apartment)
-async def get_apartment(apartment_id: int):
-    try:
-        cache_key = f"apartments:{apartment_id}"
-        cached = r.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
-        result = fetch_from_db(
-            "SELECT id, listing_id, name, price, poi FROM apartments WHERE id = %s",
-            (apartment_id,),
-        )
-        if not result:
-            raise HTTPException(status_code=404, detail="Apartment not found")
-
-        r.set(cache_key, json.dumps(_to_jsonable(result[0])), ex=60)
-        return result[0]
-    except redis.RedisError as e:
-        raise HTTPException(status_code=500, detail=f"Cache error: {str(e)}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
-
-
-@app.post("/apartments", response_model=Apartment)
-async def create_apartment(apartment: ApartmentCreate):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    INSERT INTO apartments (listing_id, name, price, poi)
-                    VALUES (%s, %s, %s, %s)
-                    RETURNING id, listing_id, name, price, poi
-                    """,
-                    (
-                        apartment.listing_id,
-                        apartment.name,
-                        apartment.price,
-                        Json(apartment.poi) if apartment.poi is not None else None,
-                    ),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=500, detail="Failed to create apartment")
-                conn.commit()
-                result = dict(row)
+        ext = os.path.splitext(file.filename or "")[1] or ""
+        base_path = os.path.join(apartment_dir, f"{next_index}")
+        temp_path = base_path + ext
 
         try:
-            r.delete("apartments:all")
-        except redis.RedisError:
-            pass
+            with open(temp_path, "wb") as out:
+                while True:
+                    chunk = await file.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+        finally:
+           await file.close()
 
-        return result
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        optimized_path = optimize_image_to_webp(temp_path)
+        if not optimized_path:
+            try:
+                if os.path.isfile(temp_path):
+                    os.remove(temp_path)
+            except Exception:
+                pass
+            raise HTTPException(status_code=400, detail="Invalid image or optimization failed")
 
-
-@app.put("/apartments/{apartment_id}", response_model=Apartment)
-async def update_apartment(apartment_id: int, apartment: ApartmentCreate):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    UPDATE apartments
-                    SET listing_id = %s, name = %s, price = %s, poi = %s
-                    WHERE id = %s
-                    RETURNING id, listing_id, name, price, poi
-                    """,
-                    (
-                        apartment.listing_id,
-                        apartment.name,
-                        apartment.price,
-                        Json(apartment.poi) if apartment.poi is not None else None,
-                        apartment_id,
-                    ),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Apartment not found")
-                conn.commit()
-                result = dict(row)
-
+        # Remove old file if exists
         try:
-            r.delete(f"apartments:{apartment_id}")
-            r.delete("apartments:all")
-        except redis.RedisError:
+            if obj.path and os.path.isfile(obj.path):
+                os.remove(obj.path)
+        except Exception:
             pass
 
-        return result
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+        obj.path = optimized_path
+
+    db.commit()
+    return {"id": obj.id, "apartment_id": obj.apartment_id}
 
 
-@app.delete("/apartments/{apartment_id}")
-async def delete_apartment(apartment_id: int):
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    "DELETE FROM apartments WHERE id = %s RETURNING id",
-                    (apartment_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    raise HTTPException(status_code=404, detail="Apartment not found")
-                conn.commit()
+@app.delete("/photos/{photo_id}", status_code=204)
+def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
+    obj = db.query(Photo).get(photo_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    db.delete(obj)
+    db.commit()
+    return None
 
-        try:
-            r.delete(f"apartments:{apartment_id}")
-            r.delete("apartments:all")
-        except redis.RedisError:
-            pass
-
-        return {"detail": "Apartment deleted"}
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
-
-
-@app.on_event("startup")
-async def startup_event():
-    # Test database connection
-    try:
-        with get_db_connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1")
-    except Exception as e:
-        print(f"Failed to connect to database: {e}")
-        raise
-
-    # Test Redis connection
-    try:
-        r.ping()
-    except Exception as e:
-        print(f"Failed to connect to Redis: {e}")
-        raise
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    pool.closeall()
-    try:
-        r.close()
-    except Exception:
-        pass
