@@ -1,9 +1,17 @@
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.exc import OperationalError
 
 from .models import Base
+
+# Load .env file from project root
+project_root = Path(__file__).resolve().parents[2]
+env_path = project_root / ".env"
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 # Build DATABASE_URL from existing env vars used elsewhere
 PG_HOST = os.getenv("POSTGRES_HOST", "localhost")
@@ -12,13 +20,24 @@ PG_USER = os.getenv("POSTGRES_USER", "user")
 PG_PASSWORD = os.getenv("POSTGRES_PASSWORD", "password")
 PG_DB = os.getenv("POSTGRES_DB", "db")
 
+# Auto-detect: if POSTGRES_HOST is "postgres" (Docker service name) but we're not in Docker,
+# try localhost instead. This allows the same .env to work in both environments.
+if PG_HOST == "postgres" and not os.path.exists("/.dockerenv"):
+    import socket
+    try:
+        # Try to resolve "postgres" hostname - if it fails, we're not in Docker network
+        socket.gethostbyname("postgres")
+    except (socket.gaierror, OSError):
+        # Not in Docker network, use localhost
+        PG_HOST = "localhost"
+
 DATABASE_URL = (
     f"postgresql+psycopg2://{PG_USER}:{PG_PASSWORD}@{PG_HOST}:{PG_PORT}/{PG_DB}"
 )
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
+Base.metadata.create_all(bind=engine)
 
 def ensure_database():
     """Ensure database is migrated; if Alembic isn't set up, create tables directly."""
