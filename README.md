@@ -43,6 +43,21 @@ Przetworzone grafy wracają do bazy danych Memgraph i są dostępne do dalszej a
 ## Interfejs API
 API umożliwia komunikację pomiędzy bazą danych, algorytmem POI oraz frontendem, obsługując odpytywanie o oferty oraz wyniki analiz POI i grafów.
 
+### Eksport dokumentacji API
+
+Aby wyeksportować dokumentację API do statycznych plików HTML:
+
+```bash
+python export_docs.py
+```
+
+Skrypt generuje:
+- `docs/openapi.json` - schemat OpenAPI w formacie JSON
+- `docs/redoc.html` - interaktywna dokumentacja ReDoc (można otworzyć w przeglądarce)
+- `docs/swagger.html` - interaktywna dokumentacja Swagger UI (można otworzyć w przeglądarce)
+
+Oba pliki HTML są w pełni interaktywne i działają offline (używają CDN dla bibliotek).
+
 ## Schemat przepływu danych
 1. Trigger codzienny uruchamia pobieranie nowych ogłoszeń.
 

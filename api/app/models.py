@@ -10,59 +10,75 @@ from sqlalchemy import (
     SmallInteger,
     CheckConstraint,
     ForeignKey,
-    Enum,
     Index,
     CHAR,
     event,
+    Enum as SQLEnum
 )
 from sqlalchemy.orm import relationship, declarative_base
-from sqlalchemy.dialects.postgresql import ENUM
+from enum import Enum as PyEnum
 from geoalchemy2 import Geography
 
 Base = declarative_base()
 
 # ===============================================
-# ENUMY
+# ENUMS
 # ===============================================
 
-source_web_e = ENUM(
-    'otodom',
-    name='source_web_e',
-    create_type=True,
-)
+class SourceWeb(PyEnum):
+    """Źródła danych o mieszkaniach"""
+    OTODOM = "otodom"
+    OLX = "olx"
+    GRATKA = "gratka"
+    MORIZON = "morizon"
 
-poi_desc_e = ENUM(
-    'high',
-    'medium',
-    'low',
-    name='poi_desc_e',
-    create_type=True,
-)
 
-price_desc_e = ENUM(
-    'cheap',
-    'average',
-    'expensive',
-    name='price_desc_e',
-    create_type=True,
-)
+class POIAccessibility(PyEnum):
+    """Poziom dostępności POI"""
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
 
-size_desc_e = ENUM(
-    'small',
-    'medium',
-    'large',
-    name='size_desc_e',
-    create_type=True,
-)
 
-style_e = ENUM(
-    'other',
-    name='style_e',
-    create_type=True,
-)
+class PriceCategory(PyEnum):
+    """Kategoria cenowa mieszkania"""
+    CHEAP = "cheap"
+    AVERAGE = "average"
+    EXPENSIVE = "expensive"
+
+
+class SizeCategory(PyEnum):
+    """Rozmiar mieszkania"""
+    SMALL = "small"
+    MEDIUM = "medium"
+    LARGE = "large"
+
+
+class ApartmentStyle(PyEnum):
+    """Styl wykończenia mieszkania"""
+    MODERN = "modern"
+    CLASSIC = "classic"
+    INDUSTRIAL = "industrial"
+    SCANDINAVIAN = "scandinavian"
+    MINIMALIST = "minimalist"
+    VINTAGE = "vintage"
+    OTHER = "other"
+
+
+class POICategory(PyEnum):
+    """Kategorie punktów użyteczności publicznej"""
+    EDUCATION = "education"
+    SHOPPING = "shopping"
+    HEALTH = "health"
+    ENTERTAINMENT = "entertainment"
+    PUBLIC_TRANSPORT = "public_transport"
+    FOOD_BEVERAGES = "food_beverages"
+    SPORT = "sport"
+    PARK = "park"
+    SERVICES = "services"
 
 # ===============================================
-# TABELA: apartments
+# TABLE: apartments
 # ===============================================
 
 class Apartment(Base):
@@ -70,8 +86,8 @@ class Apartment(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
-    source_website = Column(source_web_e, nullable=False)
-    source_id = Column(String(10), nullable=False)
+    source_website = Column(String(16), nullable=False)
+    source_id = Column(String(20), nullable=False)
     source_url = Column(String(255), nullable=False)
 
     price = Column(Numeric(10, 2))
@@ -93,12 +109,13 @@ class Apartment(Base):
     universal_attractiveness = Column(SmallInteger)
     family_attractiveness = Column(SmallInteger)
 
-    poi_desc = Column(poi_desc_e)
-    price_desc = Column(price_desc_e)
-    size_desc = Column(size_desc_e)
-    style = Column(style_e)
+    poi_desc = Column(SQLEnum(POIAccessibility, name="poi_desc_e"))
+    price_desc = Column(SQLEnum(PriceCategory, name="price_desc_e"))
+    size_desc = Column(SQLEnum(SizeCategory, name="size_desc_e"))
+    # style moved to Photo table
 
     photos = relationship("Photo", back_populates="apartment", cascade="all, delete")
+    pois = relationship("ApartmentPOI", back_populates="apartment", cascade="all, delete")
 
     __table_args__ = (
         # CHECK constraints
@@ -112,9 +129,8 @@ class Apartment(Base):
         Index('idx_apartments_source_id', 'source_website', 'source_id', unique=True),
     )
 
-
 # ===============================================
-# TABELA: photos
+# TABLE: photos
 # ===============================================
 
 class Photo(Base):
@@ -123,13 +139,13 @@ class Photo(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     apartment_id = Column(Integer, ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False)
     path = Column(String(255), nullable=False)
+    style = Column(SQLEnum(ApartmentStyle, name="style_e"))
 
     apartment = relationship("Apartment", back_populates="photos")
 
     __table_args__ = (
         Index('idx_photos_apartment_id', 'apartment_id'),
     )
-
 
 @event.listens_for(Photo, "after_delete")
 def after_delete_photo(mapper, connection, target):
@@ -139,5 +155,33 @@ def after_delete_photo(mapper, connection, target):
         if file_path and os.path.isfile(file_path):
             os.remove(file_path)
     except Exception as e:
-        # Do not block DB transaction on filesystem errors
         print(f"[WARN] Failed to remove file {getattr(target, 'path', None)}: {e}")
+
+# ===============================================
+# TABLE: POIs
+# ===============================================
+
+class POI(Base):
+    __tablename__ = "pois"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    geolocation = Column(Geography(geometry_type='POINT', srid=4326), nullable=False)
+    category = Column(SQLEnum(POICategory, name="poi_category_e"), nullable=False)
+    name = Column(String(50), nullable=False)
+
+    apartments = relationship("ApartmentPOI", back_populates="poi", cascade="all, delete")
+
+class ApartmentPOI(Base):
+    __tablename__ = "apartment_best_poi"
+
+    apartment_id = Column(Integer, ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False, primary_key=True)
+    poi_id = Column(Integer, ForeignKey("pois.id", ondelete="CASCADE"), nullable=False, primary_key=True)
+    category = Column(SQLEnum(POICategory, name="poi_category_e"), nullable=False)
+
+    __table_args__ = (
+        Index('ix_apartment_best_poi_poi_id', 'poi_id'),
+    )
+
+    # Relationships
+    apartment = relationship("Apartment", back_populates="pois")
+    poi = relationship("POI", back_populates="apartments")
