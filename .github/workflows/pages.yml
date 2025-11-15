@@ -25,9 +25,27 @@ jobs:
   # Build job
   build:
     runs-on: ubuntu-latest
+    
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          docker compose version
+
+      - name: Start services with Docker Compose
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: db
+          POSTGRES_HOST: postgres
+          POSTGRES_PORT: 5432
+          REDIS_PASSWORD: password
+        run: |
+          docker compose up -d postgres redis
+          # Wait for PostgreSQL to be ready
+          timeout 60 bash -c 'until docker compose exec -T postgres pg_isready -U user; do sleep 2; done'
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -40,8 +58,26 @@ jobs:
           pip install -r api/requirements.txt
 
       - name: Generate API documentation
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: db
+          REDIS_HOST: localhost
+          REDIS_PORT: 6379
+          REDIS_PASSWORD: password
         run: |
           python export_docs.py
+
+      - name: Create index.html from swagger.html
+        run: |
+          cp docs/swagger.html docs/index.html
+
+      - name: Stop Docker Compose services
+        if: always()
+        run: |
+          docker compose down
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
