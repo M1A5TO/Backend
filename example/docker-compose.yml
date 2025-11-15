@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  processor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rabbitmq_processor
+    environment:
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-rabbitmq}
+      RABBITMQ_PORT: ${RABBITMQ_PORT:-5672}
+      RABBITMQ_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
+      INPUT_QUEUE: ${INPUT_QUEUE:-input_queue}
+      OUTPUT_QUEUE: ${OUTPUT_QUEUE:-output_queue}
+    restart: unless-stopped
+
