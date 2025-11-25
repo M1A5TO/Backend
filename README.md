@@ -43,6 +43,24 @@ Przetworzone grafy wracają do bazy danych Memgraph i są dostępne do dalszej a
 ## Interfejs API
 API umożliwia komunikację pomiędzy bazą danych, algorytmem POI oraz frontendem, obsługując odpytywanie o oferty oraz wyniki analiz POI i grafów.
 
+### Weryfikacja duplikatów ofert
+Endpoint `POST /apartments/duplicates/check` pozwala scrapperowi sprawdzić, czy w bazie znajdują się mieszkania w zadanym promieniu lub prostokącie oraz w podanych widełkach ceny/metrażu. Przykładowe wywołanie:
+
+```bash
+curl -X POST http://localhost:8000/apartments/duplicates/check \
+  -H "Content-Type: application/json" \
+  -d '{
+        "center": {"lat": 52.2297, "lng": 21.0122},
+        "radius_m": 50,
+        "price_min": 3400,
+        "price_max": 3600,
+        "footage_min": 39,
+        "footage_max": 41
+      }'
+```
+
+Odpowiedź zawiera listę dopasowanych mieszkań (`matches`), ich liczbę (`count`) oraz flagę `has_matches`, która pozwala szybko zadecydować, czy dane ogłoszenie należy odrzucić po stronie scrappera.
+
 ### Eksport dokumentacji API
 
 Aby wyeksportować dokumentację API do statycznych plików HTML:

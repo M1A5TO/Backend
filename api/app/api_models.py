@@ -18,6 +18,41 @@ class POIOut(BaseModel):
         from_attributes = True
 
 
+class BoundingBox(BaseModel):
+    south_west: GeoPoint
+    north_east: GeoPoint
+
+    def to_polygon_wkt(self) -> str:
+        sw = self.south_west
+        ne = self.north_east
+        coords = [
+            (sw.lng, sw.lat),
+            (sw.lng, ne.lat),
+            (ne.lng, ne.lat),
+            (ne.lng, sw.lat),
+            (sw.lng, sw.lat),
+        ]
+        coord_str = ", ".join(f"{lng} {lat}" for lng, lat in coords)
+        return f"SRID=4326;POLYGON(({coord_str}))"
+
+
+class DuplicateCheckRequest(BaseModel):
+    center: Optional[GeoPoint] = None
+    radius_m: Optional[float] = None
+    bounding_box: Optional[BoundingBox] = None
+    price_min: Optional[Decimal] = None
+    price_max: Optional[Decimal] = None
+    footage_min: Optional[Decimal] = None
+    footage_max: Optional[Decimal] = None
+    limit: int = 50
+
+
+class DuplicateCheckResponse(BaseModel):
+    has_matches: bool
+    count: int
+    matches: List["ApartmentOut"]
+
+
 # --- Schemas ---
 class ApartmentBase(BaseModel):
     source_website: str
