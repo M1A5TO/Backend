@@ -28,7 +28,8 @@ from .common import optimize_image_to_webp
 from .api_models import (
     ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut,
     POIOut, POICreate, POIUpdate,
-    ApartmentPOIOut, ApartmentPOICreate
+    ApartmentPOIOut, ApartmentPOICreate,
+    DuplicateCheckRequest, DuplicateCheckResponse
 )
 from .helpers import serialize_apartment, parse_geotext
 
@@ -227,6 +228,70 @@ def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
     db.delete(obj)
     db.commit()
     return None
+
+
+@app.post("/apartments/duplicates/check", response_model=DuplicateCheckResponse)
+def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Depends(get_db_session)):
+    """
+    Check if apartments exist within given spatial, price and footage tolerances.
+
+    Scraper can use this to avoid ingesting obvious duplicates.
+    """
+    if payload.limit <= 0 or payload.limit > 200:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
+
+    if payload.center is None and payload.radius_m is not None:
+        raise HTTPException(status_code=400, detail="center is required when radius_m is provided")
+    if payload.radius_m is None and payload.center is not None:
+        raise HTTPException(status_code=400, detail="radius_m is required when center is provided")
+
+    if not payload.bounding_box and not payload.center:
+        raise HTTPException(status_code=400, detail="Provide either center+radius_m or bounding_box")
+
+    query = db.query(
+        Apartment,
+        func.ST_AsText(Apartment.geolocation).label("geotext")
+    ).filter(Apartment.geolocation.isnot(None))
+
+    if payload.center and payload.radius_m:
+        point_wkt = f"SRID=4326;POINT({payload.center.lng} {payload.center.lat})"
+        query = query.filter(
+            func.ST_DWithin(
+                Apartment.geolocation,
+                func.ST_GeogFromText(point_wkt),
+                payload.radius_m
+            )
+        )
+
+    if payload.bounding_box:
+        poly_wkt = payload.bounding_box.to_polygon_wkt()
+        apartment_geom = func.ST_GeomFromWKB(func.ST_AsBinary(Apartment.geolocation))
+        query = query.filter(
+            func.ST_Within(
+                apartment_geom,
+                func.ST_GeomFromText(poly_wkt)
+            )
+        )
+
+    if payload.price_min is not None:
+        query = query.filter(Apartment.price >= payload.price_min)
+    if payload.price_max is not None:
+        query = query.filter(Apartment.price <= payload.price_max)
+    if payload.footage_min is not None:
+        query = query.filter(Apartment.footage >= payload.footage_min)
+    if payload.footage_max is not None:
+        query = query.filter(Apartment.footage <= payload.footage_max)
+
+    rows = query.limit(payload.limit).all()
+    matches = [
+        serialize_apartment(apartment, geotext)
+        for apartment, geotext in rows
+    ]
+    return DuplicateCheckResponse(
+        has_matches=bool(matches),
+        count=len(matches),
+        matches=matches,
+    )
 
 
 # --- CRUD: Photos ---
