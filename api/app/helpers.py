@@ -28,7 +28,7 @@ def serialize_apartment(obj: Apartment, geotext: Optional[str] = None, photos: O
         "footage","price_per_m2","city","description","photo_attractiveness",
         "student_attractiveness","single_attractiveness","dog_owner_attractiveness",
         "universal_attractiveness","family_attractiveness","poi_desc","price_desc",
-        "size_desc",
+        "size_desc","style",
     ]
     data: Dict[str, Any] = {}
     for f in fields:
@@ -36,14 +36,19 @@ def serialize_apartment(obj: Apartment, geotext: Optional[str] = None, photos: O
     data["id"] = getattr(obj, "id", None)
 
     data["geolocation"] = parse_geotext(geotext)
+    
+    if "style" in data and data["style"] is not None:
+        style_val = data["style"]
+        if hasattr(style_val, "value"):
+            data["style"] = style_val.value
+        else:
+            data["style"] = str(style_val) if style_val else None
 
-    # photos: prefer explicit list
     if photos is not None:
         data["photo_ids"] = photos
     else:
         data["photo_ids"] = [p.id for p in getattr(obj, "photos", [])] if getattr(obj, "photos", None) is not None else []
 
-    # pois: prefer explicit list
     if pois is not None:
         data["pois"] = pois
     else:
@@ -53,9 +58,13 @@ def serialize_apartment(obj: Apartment, geotext: Optional[str] = None, photos: O
             if not poi:
                 continue
             poi_geo = parse_geotext(str(getattr(poi, "geolocation", None)))
-            category = getattr(rel, "category", None)
-            cat_val = category.value if hasattr(category, "value") else category
-            pois_out.append({"id": getattr(poi, "id", None), "name": getattr(poi, "name", None), "category": cat_val, "geolocation": poi_geo})
+            cat_val = poi.category.value if hasattr(poi.category, "value") else str(poi.category)
+            pois_out.append({
+                "id": getattr(poi, "id", None), 
+                "category": cat_val, 
+                "geolocation": poi_geo,
+                "time_to_poi": getattr(rel, "time_to_poi", None)
+            })
         data["pois"] = pois_out
 
     return data

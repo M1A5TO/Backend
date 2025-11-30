@@ -1,21 +1,13 @@
 from typing import Optional, List
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 
 class GeoPoint(BaseModel):
     lat: float
     lng: float
-
-class POIOut(BaseModel):
-    id: int
-    name: str
-    category: Optional[str] = None
-    geolocation: Optional[GeoPoint] = None
-    class Config:
-        from_attributes = True
 
 
 class BoundingBox(BaseModel):
@@ -75,6 +67,7 @@ class ApartmentBase(BaseModel):
     poi_desc: Optional[str] = None
     price_desc: Optional[str] = None
     size_desc: Optional[str] = None
+    style: Optional[str] = None
 
 
 class ApartmentCreate(ApartmentBase):
@@ -99,6 +92,7 @@ class ApartmentUpdate(BaseModel):
     poi_desc: Optional[str] = None
     price_desc: Optional[str] = None
     size_desc: Optional[str] = None
+    style: Optional[str] = None
 
 
 class ApartmentOut(BaseModel):
@@ -123,16 +117,18 @@ class ApartmentOut(BaseModel):
     poi_desc: Optional[str] = None
     price_desc: Optional[str] = None
     size_desc: Optional[str] = None
+    style: Optional[str] = None
 
     photo_ids: List[int] = []
-    pois: List[POIOut] = []
+    pois: List["POIOut"] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PhotoBase(BaseModel):
     apartment_id: int
+    link: str
+    style: Optional[str] = None
 
 
 class PhotoCreate(PhotoBase):
@@ -140,19 +136,19 @@ class PhotoCreate(PhotoBase):
 
 
 class PhotoUpdate(BaseModel):
-    path: Optional[str] = None
+    apartment_id: Optional[int] = None
+    link: Optional[str] = None
+    style: Optional[str] = None
 
 
 class PhotoOut(PhotoBase):
     id: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- POI Schemas ---
 class POIBase(BaseModel):
-    name: str
     category: str
     geolocation: GeoPoint
 
@@ -162,32 +158,28 @@ class POICreate(POIBase):
 
 
 class POIUpdate(BaseModel):
-    name: Optional[str] = None
     category: Optional[str] = None
     geolocation: Optional[GeoPoint] = None
 
 
 class POIOut(BaseModel):
     id: int
-    name: str
     category: str
     geolocation: Optional[GeoPoint] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # --- ApartmentPOI Schemas ---
 class ApartmentPOICreate(BaseModel):
     poi_id: int
-    category: str
+    time_to_poi: Optional[int] = None
 
 
 class ApartmentPOIOut(BaseModel):
     apartment_id: int
     poi_id: int
-    category: str
+    time_to_poi: Optional[int] = None
     poi: Optional[POIOut] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
