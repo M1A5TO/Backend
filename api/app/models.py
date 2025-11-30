@@ -1,6 +1,3 @@
-import threading
-import requests
-import os
 from sqlalchemy import (
     Column,
     Integer,
@@ -67,15 +64,28 @@ class ApartmentStyle(PyEnum):
 
 class POICategory(PyEnum):
     """Kategorie punktów użyteczności publicznej"""
-    EDUCATION = "education"
-    SHOPPING = "shopping"
-    HEALTH = "health"
-    ENTERTAINMENT = "entertainment"
-    PUBLIC_TRANSPORT = "public_transport"
-    FOOD_BEVERAGES = "food_beverages"
-    SPORT = "sport"
+    SUPERMARKET = "supermarket"
+    CONVENIENCE = "convenience"
+    BAKERY = "bakery"
+    PET_SHOP = "pet_shop"
+    
+    PHARMACY = "pharmacy"
+    CLINIC_HOSPITAL = "clinic_hospital"
+    PARCEL_LOCKER = "parcel_locker"
+    UNIVERSITY = "university"
+    LIBRARY = "library"
+    NIGHTCLUB = "nightclub"
+    SCHOOL = "school"
+    KINDER_CHILDCARE = "kinder_childcare"
+    VETERINARY = "veterinary"
+    PUB = "pub"
+    FITNESS_CENTRE = "fitness_centre"
+    PLAYGROUND = "playground"
     PARK = "park"
-    SERVICES = "services"
+    
+    BUS_STOP = "bus_stop"
+    TRAM_STOP = "tram_stop"
+    RAIL_STATION = "rail_station"
 
 # ===============================================
 # TABLE: apartments
@@ -108,11 +118,11 @@ class Apartment(Base):
     dog_owner_attractiveness = Column(SmallInteger)
     universal_attractiveness = Column(SmallInteger)
     family_attractiveness = Column(SmallInteger)
+    style = Column(SQLEnum(ApartmentStyle, name="style_e"))
 
     poi_desc = Column(SQLEnum(POIAccessibility, name="poi_desc_e"))
     price_desc = Column(SQLEnum(PriceCategory, name="price_desc_e"))
     size_desc = Column(SQLEnum(SizeCategory, name="size_desc_e"))
-    # style moved to Photo table
 
     photos = relationship("Photo", back_populates="apartment", cascade="all, delete")
     pois = relationship("ApartmentPOI", back_populates="apartment", cascade="all, delete")
@@ -127,6 +137,8 @@ class Apartment(Base):
         CheckConstraint('family_attractiveness BETWEEN 0 AND 100', name='family_attr_check'),
         Index('idx_apartments_city', 'city'),
         Index('idx_apartments_source_id', 'source_website', 'source_id', unique=True),
+        Index('idx_apartments_price', 'price'),
+        Index('idx_apartments_footage', 'footage'),
     )
 
 # ===============================================
@@ -138,7 +150,7 @@ class Photo(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     apartment_id = Column(Integer, ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False)
-    path = Column(String(255), nullable=False)
+    link = Column(String(255), nullable=False)
     style = Column(SQLEnum(ApartmentStyle, name="style_e"))
 
     apartment = relationship("Apartment", back_populates="photos")
@@ -147,15 +159,6 @@ class Photo(Base):
         Index('idx_photos_apartment_id', 'apartment_id'),
     )
 
-@event.listens_for(Photo, "after_delete")
-def after_delete_photo(mapper, connection, target):
-    """Remove photo file from disk when record is deleted."""
-    try:
-        file_path = getattr(target, "path", None)
-        if file_path and os.path.isfile(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        print(f"[WARN] Failed to remove file {getattr(target, 'path', None)}: {e}")
 
 # ===============================================
 # TABLE: POIs
@@ -167,7 +170,6 @@ class POI(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     geolocation = Column(Geography(geometry_type='POINT', srid=4326), nullable=False)
     category = Column(SQLEnum(POICategory, name="poi_category_e"), nullable=False)
-    name = Column(String(50), nullable=False)
 
     apartments = relationship("ApartmentPOI", back_populates="poi", cascade="all, delete")
 
@@ -176,7 +178,7 @@ class ApartmentPOI(Base):
 
     apartment_id = Column(Integer, ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False, primary_key=True)
     poi_id = Column(Integer, ForeignKey("pois.id", ondelete="CASCADE"), nullable=False, primary_key=True)
-    category = Column(SQLEnum(POICategory, name="poi_category_e"), nullable=False)
+    time_to_poi = Column(Integer)
 
     __table_args__ = (
         Index('ix_apartment_best_poi_poi_id', 'poi_id'),
