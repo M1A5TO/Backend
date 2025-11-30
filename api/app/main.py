@@ -2,19 +2,14 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 import redis
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Depends
 from typing import List, Optional
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, joinedload
 from contextlib import asynccontextmanager
-from sqlalchemy import func
+from sqlalchemy import func, text
 
 
-from sqlalchemy.orm import Session
-from fastapi.responses import FileResponse
-import mimetypes
-
-# Load .env file from project root
 project_root = Path(__file__).resolve().parents[2]
 env_path = project_root / ".env"
 if env_path.exists():
@@ -22,11 +17,10 @@ if env_path.exists():
 
 from .db import get_db_session, ensure_database
 from .models import Apartment, Photo, POI, ApartmentPOI
-from .common import optimize_image_to_webp
 
 
 from .api_models import (
-    ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut,
+    ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut, PhotoCreate, PhotoUpdate,
     POIOut, POICreate, POIUpdate,
     ApartmentPOIOut, ApartmentPOICreate,
     DuplicateCheckRequest, DuplicateCheckResponse
@@ -47,12 +41,9 @@ r = redis.Redis(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup code
     ensure_database()
     os.makedirs(os.getenv("MEDIA_ROOT", "/media/photos"), exist_ok=True)
-    yield
-    # Shutdown code (optional)
-    # e.g., close DB connections
+    yield   
 
 
 # --- FastAPI ---
@@ -96,7 +87,6 @@ def list_apartments(
         joinedload(Apartment.pois).joinedload(ApartmentPOI.poi),
     )
     
-    # Apply filters
     if city:
         query = query.filter(Apartment.city.ilike(f"%{city}%"))
     
@@ -106,7 +96,6 @@ def list_apartments(
     if min_footage is not None:
         query = query.filter(Apartment.footage >= min_footage)
 
-    # Sort by profile attractiveness (descending) if profile is specified
     if profile:
         profile_lower = profile.lower()
         if profile_lower == "student":
@@ -120,13 +109,10 @@ def list_apartments(
         elif profile_lower == "universal":
             query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
         else:
-            # Default to universal if profile is invalid
             query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
     else:
-        # Default sorting by universal attractiveness if no profile specified
         query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
 
-    # Apply pagination
     rows = query.offset(skip).limit(limit).all()
     
     result = []
@@ -139,9 +125,8 @@ def list_apartments(
                 continue
             poi_geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
             poi_geo = parse_geotext(poi_geotext)
-            category = getattr(rel, "category", None)
-            cat_val = category.value if hasattr(category, "value") else category
-            pois.append({"id": poi.id, "name": poi.name, "category": cat_val, "geolocation": poi_geo})
+            cat_val = poi.category.value if hasattr(poi.category, "value") else str(poi.category)
+            pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo, "time_to_poi": rel.time_to_poi})
         result.append(serialize_apartment(apt, geotext, photos=photos, pois=pois))
     return result
 
@@ -168,35 +153,51 @@ def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
             continue
         poi_geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
         poi_geo = parse_geotext(poi_geotext)
-        category = getattr(rel, "category", None)
-        cat_val = category.value if hasattr(category, "value") else category
-        pois.append({"id": poi.id, "name": poi.name, "category": cat_val, "geolocation": poi_geo})
+        cat_val = poi.category.value if hasattr(poi.category, "value") else str(poi.category)
+        pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo})
     return serialize_apartment(apt, geotext, photos=photos, pois=pois)
 
 @app.post("/apartments", response_model=ApartmentOut, status_code=201)
 def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_session)):
-    data = payload.dict(exclude={"geolocation"})
+    from .models import ApartmentStyle
+    
+    data = payload.model_dump(exclude={"geolocation", "style"})
     obj = Apartment(**data)
-    # handle geolocation if provided
+    
+    if payload.style is not None:
+        try:
+            obj.style = ApartmentStyle(payload.style)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
+    
     if payload.geolocation is not None:
         obj.geolocation = f"SRID=4326;POINT({payload.geolocation.lng} {payload.geolocation.lat})"
     db.add(obj)
     db.commit()
     db.refresh(obj)
     geotext = db.query(func.ST_AsText(Apartment.geolocation)).filter(Apartment.id == obj.id).scalar()
-    # created apartment has no photos/pois yet
     return serialize_apartment(obj, geotext, photos=[], pois=[])
 
 
 @app.put("/apartments/{apartment_id}", response_model=ApartmentOut)
 def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = Depends(get_db_session)):
-    obj = db.query(Apartment).get(apartment_id)
+    from .models import ApartmentStyle
+    
+    obj = db.get(Apartment, apartment_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Apartment not found")
-    update_data = payload.dict(exclude_unset=True, exclude={"geolocation"})
+    update_data = payload.model_dump(exclude_unset=True, exclude={"geolocation", "style"})
     for k, v in update_data.items():
         setattr(obj, k, v)
-    # handle geolocation separately
+    
+    if payload.style is not None:
+        try:
+            obj.style = ApartmentStyle(payload.style)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
+    elif hasattr(payload, "style") and payload.style == "":
+        obj.style = None
+    
     if getattr(payload, "geolocation", None) is not None:
         geo = payload.geolocation
         if geo is None:
@@ -214,15 +215,14 @@ def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = 
             continue
         poi_geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
         poi_geo = parse_geotext(poi_geotext)
-        category = getattr(rel, "category", None)
-        cat_val = category.value if hasattr(category, "value") else category
-        pois.append({"id": poi.id, "name": poi.name, "category": cat_val, "geolocation": poi_geo})
+        cat_val = poi.category.value if hasattr(poi.category, "value") else str(poi.category)
+        pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo})
     return serialize_apartment(obj, geotext, photos=photos, pois=pois)
 
 
 @app.delete("/apartments/{apartment_id}", status_code=204)
 def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
-    obj = db.query(Apartment).get(apartment_id)
+    obj = db.get(Apartment, apartment_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Apartment not found")
     db.delete(obj)
@@ -232,11 +232,17 @@ def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
 
 @app.post("/apartments/duplicates/check", response_model=DuplicateCheckResponse)
 def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Depends(get_db_session)):
-    """
-    Check if apartments exist within given spatial, price and footage tolerances.
-
-    Scraper can use this to avoid ingesting obvious duplicates.
-    """
+    result = db.execute(text("SELECT COUNT(*) FROM spatial_ref_sys WHERE srid = 4326;"))
+    if result.scalar() == 0:
+        db.execute(text("""
+            INSERT INTO spatial_ref_sys (srid, auth_name, auth_srid, proj4text, srtext)
+            VALUES (4326, 'EPSG', 4326, 
+                '+proj=longlat +datum=WGS84 +no_defs',
+                'GEOGCS["WGS 84",DATUM["WGS_1984",SPHEROID["WGS 84",6378137,298.257223563,AUTHORITY["EPSG","7030"]],AUTHORITY["EPSG","6326"]],PRIMEM["Greenwich",0,AUTHORITY["EPSG","8901"]],UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],AUTHORITY["EPSG","4326"]]'
+            ) ON CONFLICT (srid) DO NOTHING;
+        """))
+        db.commit()
+    
     if payload.limit <= 0 or payload.limit > 200:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 200")
 
@@ -247,31 +253,10 @@ def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Dep
 
     if not payload.bounding_box and not payload.center:
         raise HTTPException(status_code=400, detail="Provide either center+radius_m or bounding_box")
-
     query = db.query(
         Apartment,
         func.ST_AsText(Apartment.geolocation).label("geotext")
     ).filter(Apartment.geolocation.isnot(None))
-
-    if payload.center and payload.radius_m:
-        point_wkt = f"SRID=4326;POINT({payload.center.lng} {payload.center.lat})"
-        query = query.filter(
-            func.ST_DWithin(
-                Apartment.geolocation,
-                func.ST_GeogFromText(point_wkt),
-                payload.radius_m
-            )
-        )
-
-    if payload.bounding_box:
-        poly_wkt = payload.bounding_box.to_polygon_wkt()
-        apartment_geom = func.ST_GeomFromWKB(func.ST_AsBinary(Apartment.geolocation))
-        query = query.filter(
-            func.ST_Within(
-                apartment_geom,
-                func.ST_GeomFromText(poly_wkt)
-            )
-        )
 
     if payload.price_min is not None:
         query = query.filter(Apartment.price >= payload.price_min)
@@ -282,7 +267,38 @@ def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Dep
     if payload.footage_max is not None:
         query = query.filter(Apartment.footage <= payload.footage_max)
 
+    if payload.center and payload.radius_m:
+        point_geog = text(
+            f"ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography"
+        ).bindparams(lng=payload.center.lng, lat=payload.center.lat)
+        query = query.filter(
+            func.ST_DWithin(
+                Apartment.geolocation,
+                point_geog,
+                payload.radius_m
+            )
+        )
+
+    if payload.bounding_box:
+        poly_wkt = payload.bounding_box.to_polygon_wkt()
+        poly_wkt_clean = poly_wkt.replace('SRID=4326;', '') if 'SRID=4326;' in poly_wkt else poly_wkt
+        if 'SRID=' in poly_wkt:
+            poly_geom = text(f"ST_GeomFromEWKT(:poly_wkt)").bindparams(poly_wkt=poly_wkt)
+        else:
+            poly_geom = text(f"ST_SetSRID(ST_GeomFromText(:poly_wkt), 4326)").bindparams(poly_wkt=poly_wkt_clean)
+        apt_geom = func.ST_SetSRID(
+            func.ST_GeomFromWKB(func.ST_AsBinary(Apartment.geolocation)),
+            4326
+        )
+        query = query.filter(
+            func.ST_Within(
+                apt_geom,
+                poly_geom
+            )
+        )
+
     rows = query.limit(payload.limit).all()
+    
     matches = [
         serialize_apartment(apartment, geotext)
         for apartment, geotext in rows
@@ -300,140 +316,73 @@ def list_photos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_se
     return db.query(Photo).offset(skip).limit(limit).all()
 
 
-@app.get("/photos/{photo_id}")
+@app.get("/photos/{photo_id}", response_model=PhotoOut)
 def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
-    obj = db.query(Photo).get(photo_id)
+    obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
-    if not obj.path or not os.path.isfile(obj.path):
-        raise HTTPException(status_code=404, detail="Photo file missing")
-    media_type = mimetypes.guess_type(obj.path)[0] or "application/octet-stream"
-    return FileResponse(path=obj.path, media_type=media_type)
+    return obj
 
 
-@app.post("/photos", status_code=201)
-async def create_photo(
-    apartment_id: int = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db_session),
-):
-    # Persist file in /media/photos/{apartment_id}/{index}{ext}
-    media_root = os.getenv("MEDIA_ROOT", "/media/photos")
-    apartment_dir = os.path.join(media_root, str(apartment_id))
-    os.makedirs(apartment_dir, exist_ok=True)
-
-    existing = [f for f in os.listdir(apartment_dir) if os.path.isfile(os.path.join(apartment_dir, f))]
-    indices = []
-    for name in existing:
-        base, _ext = os.path.splitext(name)
+@app.post("/photos", response_model=PhotoOut, status_code=201)
+def create_photo(payload: PhotoCreate, db: Session = Depends(get_db_session)):
+    """Create a new photo with a link."""
+    from .models import ApartmentStyle
+    
+    style_enum = None
+    if payload.style is not None:
         try:
-            indices.append(int(base))
+            style_enum = ApartmentStyle(payload.style)
         except ValueError:
-            continue
-    next_index = (max(indices) + 1) if indices else 0
-
-    ext = os.path.splitext(file.filename or "")[1] or ""
-    base_path = os.path.join(apartment_dir, f"{next_index}")
-    temp_path = base_path + ext
-
-    try:
-        with open(temp_path, "wb") as out:
-            while True:
-                chunk = await file.read(1024 * 1024)
-                if not chunk:
-                    break
-                out.write(chunk)
-    finally:
-        await file.close()
-
-    # Optimize to webp; returns final path or None
-    optimized_path = optimize_image_to_webp(temp_path)
-    if not optimized_path:
-        # cleanup
-        try:
-            if os.path.isfile(temp_path):
-                os.remove(temp_path)
-        except Exception:
-            pass
-        raise HTTPException(status_code=400, detail="Invalid image or optimization failed")
-
-    obj = Photo(apartment_id=apartment_id, path=optimized_path)
+            raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
+    
+    obj = Photo(
+        apartment_id=payload.apartment_id,
+        link=payload.link,
+        style=style_enum
+    )
     db.add(obj)
     db.commit()
     db.refresh(obj)
-    return {"id": obj.id, "apartment_id": obj.apartment_id}
+    return obj
 
 
-@app.put("/photos/{photo_id}")
-async def update_photo(
+@app.put("/photos/{photo_id}", response_model=PhotoOut)
+def update_photo(
     photo_id: int,
-    apartment_id: Optional[int] = Form(None),
-    file: Optional[UploadFile] = File(None),
+    payload: PhotoUpdate,
     db: Session = Depends(get_db_session),
 ):
-    obj = db.query(Photo).get(photo_id)
+    """Update photo link and/or style."""
+    from .models import ApartmentStyle
+    
+    obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
 
-    # Update apartment relation if provided
-    if apartment_id is not None:
-        obj.apartment_id = apartment_id
+    if payload.apartment_id is not None:
+        obj.apartment_id = payload.apartment_id
 
-    # Replace file if provided
-    if file is not None:
-        media_root = os.getenv("MEDIA_ROOT", "/media/photos")
-        apartment_dir = os.path.join(media_root, str(obj.apartment_id))
-        os.makedirs(apartment_dir, exist_ok=True)
+    if payload.link is not None:
+        obj.link = payload.link
 
-        existing = [f for f in os.listdir(apartment_dir) if os.path.isfile(os.path.join(apartment_dir, f))]
-        indices = []
-        for name in existing:
-            base, _ext = os.path.splitext(name)
+    if payload.style is not None:
+        if payload.style == "":
+            obj.style = None
+        else:
             try:
-                indices.append(int(base))
+                obj.style = ApartmentStyle(payload.style)
             except ValueError:
-                continue
-        next_index = (max(indices) + 1) if indices else 0
-
-        ext = os.path.splitext(file.filename or "")[1] or ""
-        base_path = os.path.join(apartment_dir, f"{next_index}")
-        temp_path = base_path + ext
-
-        try:
-            with open(temp_path, "wb") as out:
-                while True:
-                    chunk = await file.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-        finally:
-           await file.close()
-
-        optimized_path = optimize_image_to_webp(temp_path)
-        if not optimized_path:
-            try:
-                if os.path.isfile(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
-            raise HTTPException(status_code=400, detail="Invalid image or optimization failed")
-
-        # Remove old file if exists
-        try:
-            if obj.path and os.path.isfile(obj.path):
-                os.remove(obj.path)
-        except Exception:
-            pass
-
-        obj.path = optimized_path
+                raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
 
     db.commit()
-    return {"id": obj.id, "apartment_id": obj.apartment_id}
+    db.refresh(obj)
+    return obj
 
 
 @app.delete("/photos/{photo_id}", status_code=204)
 def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
-    obj = db.query(Photo).get(photo_id)
+    obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
     db.delete(obj)
@@ -444,13 +393,11 @@ def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
 # --- CRUD: POIs ---
 @app.get("/pois", response_model=List[POIOut])
 def list_pois(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session)):
-    """List all POIs."""
     rows = db.query(POI, func.ST_AsText(POI.geolocation).label("geotext")).offset(skip).limit(limit).all()
     result = []
     for poi, geotext in rows:
         result.append({
             "id": poi.id,
-            "name": poi.name,
             "category": poi.category.value if hasattr(poi.category, "value") else str(poi.category),
             "geolocation": parse_geotext(geotext)
         })
@@ -459,14 +406,12 @@ def list_pois(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_sess
 
 @app.get("/pois/{poi_id}", response_model=POIOut)
 def get_poi(poi_id: int, db: Session = Depends(get_db_session)):
-    """Get POI by ID."""
     row = db.query(POI, func.ST_AsText(POI.geolocation).label("geotext")).filter(POI.id == poi_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="POI not found")
     poi, geotext = row
     return {
         "id": poi.id,
-        "name": poi.name,
         "category": poi.category.value if hasattr(poi.category, "value") else str(poi.category),
         "geolocation": parse_geotext(geotext)
     }
@@ -474,17 +419,14 @@ def get_poi(poi_id: int, db: Session = Depends(get_db_session)):
 
 @app.post("/pois", response_model=POIOut, status_code=201)
 def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
-    """Create a new POI."""
     from .models import POICategory
     
-    # Validate category
     try:
         category_enum = POICategory(payload.category)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {[c.value for c in POICategory]}")
     
     poi = POI(
-        name=payload.name,
         category=category_enum,
         geolocation=f"SRID=4326;POINT({payload.geolocation.lng} {payload.geolocation.lat})"
     )
@@ -494,7 +436,6 @@ def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
     geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
     return {
         "id": poi.id,
-        "name": poi.name,
         "category": poi.category.value,
         "geolocation": parse_geotext(geotext)
     }
@@ -502,15 +443,12 @@ def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
 
 @app.put("/pois/{poi_id}", response_model=POIOut)
 def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_session)):
-    """Update POI."""
     from .models import POICategory
     
-    poi = db.query(POI).get(poi_id)
+    poi = db.get(POI, poi_id)
     if not poi:
         raise HTTPException(status_code=404, detail="POI not found")
     
-    if payload.name is not None:
-        poi.name = payload.name
     if payload.category is not None:
         try:
             poi.category = POICategory(payload.category)
@@ -524,7 +462,6 @@ def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_ses
     geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
     return {
         "id": poi.id,
-        "name": poi.name,
         "category": poi.category.value,
         "geolocation": parse_geotext(geotext)
     }
@@ -532,8 +469,7 @@ def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_ses
 
 @app.delete("/pois/{poi_id}", status_code=204)
 def delete_poi(poi_id: int, db: Session = Depends(get_db_session)):
-    """Delete POI."""
-    poi = db.query(POI).get(poi_id)
+    poi = db.get(POI, poi_id)
     if not poi:
         raise HTTPException(status_code=404, detail="POI not found")
     db.delete(poi)
@@ -544,25 +480,23 @@ def delete_poi(poi_id: int, db: Session = Depends(get_db_session)):
 # --- CRUD: Apartment Best POIs ---
 @app.get("/apartments/{apartment_id}/pois", response_model=List[ApartmentPOIOut])
 def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session)):
-    """List all best POIs for an apartment."""
-    apartment = db.query(Apartment).get(apartment_id)
+    apartment = db.get(Apartment, apartment_id)
     if not apartment:
         raise HTTPException(status_code=404, detail="Apartment not found")
     
     rels = db.query(ApartmentPOI).filter(ApartmentPOI.apartment_id == apartment_id).all()
     result = []
     for rel in rels:
-        poi = db.query(POI).get(rel.poi_id)
+        poi = db.get(POI, rel.poi_id)
         if not poi:
             continue
         poi_geotext = db.query(func.ST_AsText(POI.geolocation)).filter(POI.id == poi.id).scalar()
         result.append({
             "apartment_id": rel.apartment_id,
             "poi_id": rel.poi_id,
-            "category": rel.category.value if hasattr(rel.category, "value") else str(rel.category),
+            "time_to_poi": rel.time_to_poi,
             "poi": {
                 "id": poi.id,
-                "name": poi.name,
                 "category": poi.category.value if hasattr(poi.category, "value") else str(poi.category),
                 "geolocation": parse_geotext(poi_geotext)
             }
@@ -572,30 +506,14 @@ def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session)
 
 @app.post("/apartments/{apartment_id}/pois", response_model=ApartmentPOIOut, status_code=201)
 def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Session = Depends(get_db_session)):
-    """
-    Add a best POI to an apartment.
-    
-    Creates a relationship between an apartment and a POI, marking it as one of the best POIs for that apartment.
-    """
-    from .models import POICategory
-    
-    # Verify apartment exists
-    apartment = db.query(Apartment).get(apartment_id)
+    apartment = db.get(Apartment, apartment_id)
     if not apartment:
         raise HTTPException(status_code=404, detail="Apartment not found")
     
-    # Verify POI exists
-    poi = db.query(POI).get(payload.poi_id)
+    poi = db.get(POI, payload.poi_id)
     if not poi:
         raise HTTPException(status_code=404, detail="POI not found")
     
-    # Validate category
-    try:
-        category_enum = POICategory(payload.category)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid category. Must be one of: {[c.value for c in POICategory]}")
-    
-    # Check if relation already exists
     existing = db.query(ApartmentPOI).filter(
         ApartmentPOI.apartment_id == apartment_id,
         ApartmentPOI.poi_id == payload.poi_id
@@ -606,7 +524,7 @@ def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Sessio
     rel = ApartmentPOI(
         apartment_id=apartment_id,
         poi_id=payload.poi_id,
-        category=category_enum
+        time_to_poi=payload.time_to_poi
     )
     db.add(rel)
     db.commit()
@@ -616,10 +534,9 @@ def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Sessio
     return {
         "apartment_id": rel.apartment_id,
         "poi_id": rel.poi_id,
-        "category": rel.category.value,
+        "time_to_poi": rel.time_to_poi,
         "poi": {
             "id": poi.id,
-            "name": poi.name,
             "category": poi.category.value,
             "geolocation": parse_geotext(poi_geotext)
         }
@@ -628,7 +545,6 @@ def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Sessio
 
 @app.delete("/apartments/{apartment_id}/pois/{poi_id}", status_code=204)
 def remove_apartment_poi(apartment_id: int, poi_id: int, db: Session = Depends(get_db_session)):
-    """Remove a POI from apartment's best POIs."""
     rel = db.query(ApartmentPOI).filter(
         ApartmentPOI.apartment_id == apartment_id,
         ApartmentPOI.poi_id == poi_id
