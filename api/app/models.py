@@ -97,7 +97,7 @@ class Apartment(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     source_website = Column(String(16), nullable=False)
-    source_id = Column(String(20), nullable=False)
+    source_id = Column(String(40), nullable=False)
     source_url = Column(String(255), nullable=False)
 
     price = Column(Numeric(10, 2))
