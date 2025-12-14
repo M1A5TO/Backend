@@ -56,7 +56,7 @@ services:
       REDIS_PORT: 6379
       MEDIA_ROOT: /media/photos
     ports:
-      - "8080:8000"
+      - "8081:8000"
     networks:
       - backend
     volumes:

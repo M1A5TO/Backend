@@ -3,6 +3,10 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 -- Tworzenie użytkownika root z pełnymi uprawnieniami
 CREATE ROLE root WITH LOGIN PASSWORD 'root123' SUPERUSER CREATEDB CREATEROLE;
 
+-- Tworzenie bazy danych app_user
+CREATE DATABASE app_user OWNER root;
+GRANT ALL PRIVILEGES ON DATABASE app_user TO root;
+
 
 INSERT INTO spatial_ref_sys (srid, auth_name, auth_srid, proj4text, srtext)
 VALUES (
