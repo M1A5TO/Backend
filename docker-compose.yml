@@ -36,7 +36,7 @@ services:
       - backend
 
   api:
-    image: matiko42/backend
+    build: api/.
     container_name: zsd2_api
     restart: unless-stopped
     depends_on:

@@ -2,6 +2,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+RUN apt update && apt install curl
 RUN curl -fsSL https://tailscale.com/install.sh | sh
 
 COPY requirements.txt .
