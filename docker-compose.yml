@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgis/postgis:16-3.4
-    container_name: postgres
+    container_name: zsd2_postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -23,7 +23,7 @@ services:
 
   rabbitmq:
     image: rabbitmq:3.12-management
-    container_name: rabbitmq
+    container_name: zsd2_rabbitmq
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
@@ -37,7 +37,7 @@ services:
 
   api:
     image: matiko42/backend
-    container_name: fastapi_server
+    container_name: zsd2_api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -70,6 +70,3 @@ volumes:
 networks:
   backend:
     driver: bridge
-    # Uncomment if using external network in Unraid:
-    # external: true
-    # name: backend
