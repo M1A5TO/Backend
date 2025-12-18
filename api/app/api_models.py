@@ -129,6 +129,9 @@ class PhotoBase(BaseModel):
     apartment_id: int
     link: str
     style: Optional[str] = None
+    room_type: Optional[str] = None
+    room_style: Optional[str] = None
+    photo_type: Optional[str] = None
 
 
 class PhotoCreate(PhotoBase):
@@ -139,6 +142,9 @@ class PhotoUpdate(BaseModel):
     apartment_id: Optional[int] = None
     link: Optional[str] = None
     style: Optional[str] = None
+    room_type: Optional[str] = None
+    room_style: Optional[str] = None
+    photo_type: Optional[str] = None
 
 
 class PhotoOut(PhotoBase):

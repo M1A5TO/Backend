@@ -327,19 +327,37 @@ def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
 @app.post("/photos", response_model=PhotoOut, status_code=201)
 def create_photo(payload: PhotoCreate, db: Session = Depends(get_db_session)):
     """Create a new photo with a link."""
-    from .models import ApartmentStyle
+    from .models import ApartmentStyle, RoomType, RoomStyle
     
     style_enum = None
+    room_type_enum = None
+    room_style_enum = None
+
     if payload.style is not None:
         try:
             style_enum = ApartmentStyle(payload.style)
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
     
+    if payload.room_type is not None:
+        try:
+            room_type_enum = RoomType(payload.room_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid room_type. Must be one of: {[r.value for r in RoomType]}")
+
+    if payload.room_style is not None:
+        try:
+            room_style_enum = RoomStyle(payload.room_style)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid room_style. Must be one of: {[r.value for r in RoomStyle]}")
+    
     obj = Photo(
         apartment_id=payload.apartment_id,
         link=payload.link,
-        style=style_enum
+        style=style_enum,
+        room_type=room_type_enum,
+        room_style=room_style_enum,
+        photo_type=payload.photo_type,
     )
     db.add(obj)
     db.commit()
@@ -354,7 +372,7 @@ def update_photo(
     db: Session = Depends(get_db_session),
 ):
     """Update photo link and/or style."""
-    from .models import ApartmentStyle
+    from .models import ApartmentStyle, RoomType, RoomStyle
     
     obj = db.get(Photo, photo_id)
     if not obj:
@@ -374,6 +392,27 @@ def update_photo(
                 obj.style = ApartmentStyle(payload.style)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Invalid style. Must be one of: {[s.value for s in ApartmentStyle]}")
+
+    if payload.room_type is not None:
+        if payload.room_type == "":
+            obj.room_type = None
+        else:
+            try:
+                obj.room_type = RoomType(payload.room_type)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid room_type. Must be one of: {[r.value for r in RoomType]}")
+
+    if payload.room_style is not None:
+        if payload.room_style == "":
+            obj.room_style = None
+        else:
+            try:
+                obj.room_style = RoomStyle(payload.room_style)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"Invalid room_style. Must be one of: {[r.value for r in RoomStyle]}")
+
+    if payload.photo_type is not None:
+        obj.photo_type = payload.photo_type
 
     db.commit()
     db.refresh(obj)

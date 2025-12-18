@@ -62,6 +62,37 @@ class ApartmentStyle(PyEnum):
     OTHER = "other"
 
 
+class RoomType(PyEnum):
+    """Typ pomieszczenia na zdjęciu"""
+    KUCHNIA = "kuchnia"
+    ANEKS_KUCHENNY = "aneks_kuchenny"
+    POKOJ_DZIECIECY = "pokoj_dzieciecy"
+    SYPIALNIA = "sypialnia"
+    SYPIALNIA_DZIECIECA = "sypialnia_dziecieca"
+    SALON = "salon"
+    JADALNIA = "jadalnia"
+    LAZIENKA = "lazienka"
+    KLATKA_SCHODOWA = "klatka_schodowa"
+    SCHODY_WEWNETRZNE = "schody_wewnetrzne"
+    POKOJ_BIUROWY = "pokoj_biurowy"
+    POKOJ_GIER = "pokoj_gier"
+
+
+class RoomStyle(PyEnum):
+    """Styl pomieszczenia na zdjęciu"""
+    NOWOCZESNY = "nowoczesny"
+    WSPOLCZESNY = "wspolczesny"
+    RUSTYKALNY = "rustykalny"
+    TRADYCYJNY = "tradycyjny"
+    FARMHOUSE = "farmhouse"
+    INDYJSKI = "indyjski"
+    NADMORSKI = "nadmorski"
+    KOBIECY = "kobiecy"
+    MINIMALISTYCZNY = "minimalistyczny"
+    TROPIKALNY = "tropikalny"
+    OTHERS = "others"
+
+
 class POICategory(PyEnum):
     """Kategorie punktów użyteczności publicznej"""
     SUPERMARKET = "supermarket"
@@ -152,6 +183,9 @@ class Photo(Base):
     apartment_id = Column(Integer, ForeignKey("apartments.id", ondelete="CASCADE"), nullable=False)
     link = Column(String(255), nullable=False)
     style = Column(SQLEnum(ApartmentStyle, name="style_e"))
+    room_type = Column(SQLEnum(RoomType, name="room_type_e"))
+    room_style = Column(SQLEnum(RoomStyle, name="room_style_e"))
+    photo_type = Column(String(20))
 
     apartment = relationship("Apartment", back_populates="photos")
 
