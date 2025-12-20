@@ -4,6 +4,93 @@ Klient do obsługi API.
 import requests
 from typing import Optional, Dict, Any
 
+
+class AuthClient:
+    """Klient do autoryzacji z API."""
+    
+    def __init__(self, base_url: str = "http://localhost:8081"):
+        """
+        Inicjalizacja klienta autoryzacji.
+        
+        Args:
+            base_url: Bazowy URL API (domyślnie http://localhost:8081)
+        """
+        self.base_url = base_url.rstrip('/')
+        self.token: Optional[str] = None
+        self.username: Optional[str] = None
+    
+    def login(self, username: str, password: str) -> bool:
+        """
+        Loguje użytkownika do API.
+        
+        Args:
+            username: Nazwa użytkownika
+            password: Hasło
+            
+        Returns:
+            True jeśli logowanie się powiodło, False w przeciwnym razie
+        """
+        try:
+            response = requests.post(
+                f"{self.base_url}/login",
+                json={"username": username, "password": password},
+                headers={"Content-Type": "application/json"}
+            )
+            response.raise_for_status()
+            
+            data = response.json()
+            self.token = data.get("access_token")
+            self.username = username
+            
+            if self.token:
+                return True
+            return False
+        except requests.exceptions.RequestException as e:
+            print(f"Błąd logowania: {e}")
+            if hasattr(e.response, 'text'):
+                print(f"Szczegóły: {e.response.text}")
+            self.token = None
+            self.username = None
+            return False
+    
+    def logout(self):
+        """Wylogowuje użytkownika (usuwa token)."""
+        self.token = None
+        self.username = None
+    
+    def get_token(self) -> Optional[str]:
+        """
+        Zwraca aktualny token autoryzacyjny.
+        
+        Returns:
+            Token JWT lub None jeśli użytkownik nie jest zalogowany
+        """
+        return self.token
+    
+    def is_authenticated(self) -> bool:
+        """
+        Sprawdza czy użytkownik jest zalogowany.
+        
+        Returns:
+            True jeśli token istnieje, False w przeciwnym razie
+        """
+        return self.token is not None
+    
+    def get_auth_header(self) -> Dict[str, str]:
+        """
+        Zwraca nagłówek Authorization z tokenem.
+        
+        Returns:
+            Słownik z nagłówkiem Authorization lub pusty słownik jeśli nie jest zalogowany
+            
+        Raises:
+            ValueError: Jeśli użytkownik nie jest zalogowany
+        """
+        if not self.is_authenticated():
+            raise ValueError("Nie jesteś zalogowany. Wywołaj najpierw login().")
+        return {"Authorization": f"Bearer {self.token}"}
+
+
 class APIClient:
     """Klient do komunikacji z API."""
     
