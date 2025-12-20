@@ -172,3 +172,67 @@ class APIClient:
         except requests.exceptions.RequestException as e:
             print(f"Błąd: {e}")
             raise
+    
+    def put(self, path: str, payload: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Wykonuje żądanie PUT do API.
+        
+        Args:
+            path: Ścieżka endpointu (np. "/apartments/1")
+            payload: Dane do wysłania w body (będą przekonwertowane na JSON)
+            
+        Returns:
+            Odpowiedź JSON jako słownik lub None w przypadku błędu
+        """
+        if not self.auth_client.is_authenticated():
+            raise ValueError("Nie jesteś zalogowany. Wywołaj najpierw login() na auth_client.")
+        
+        if not path.startswith('/'):
+            path = '/' + path
+        
+        try:
+            response = requests.put(
+                f"{self.base_url}{path}",
+                headers=self._get_headers(),
+                json=payload
+            )
+            response.raise_for_status()
+            
+            if response.status_code == 204:
+                return None
+            
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Błąd: {e}")
+            raise
+    
+    def delete(self, path: str) -> Optional[Dict[str, Any]]:
+        """
+        Wykonuje żądanie DELETE do API.
+        
+        Args:
+            path: Ścieżka endpointu (np. "/apartments/1")
+            
+        Returns:
+            Odpowiedź JSON jako słownik lub None w przypadku błędu (204 No Content zwraca None)
+        """
+        if not self.auth_client.is_authenticated():
+            raise ValueError("Nie jesteś zalogowany. Wywołaj najpierw login() na auth_client.")
+        
+        if not path.startswith('/'):
+            path = '/' + path
+        
+        try:
+            response = requests.delete(
+                f"{self.base_url}{path}",
+                headers=self._get_headers()
+            )
+            response.raise_for_status()
+            
+            if response.status_code == 204:
+                return None
+            
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Błąd: {e}")
+            raise
