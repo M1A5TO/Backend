@@ -3,8 +3,6 @@ Klient do obsługi API.
 """
 import requests
 from typing import Optional, Dict, Any
-from auth_client import AuthClient
-
 
 class APIClient:
     """Klient do komunikacji z API."""
