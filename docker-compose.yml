@@ -55,6 +55,11 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       MEDIA_ROOT: /media/photos
+      # Authentication
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-change-this-secret-key-in-production}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
     ports:
       - "8081:8000"
     networks:

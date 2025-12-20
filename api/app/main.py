@@ -17,13 +17,14 @@ if env_path.exists():
 
 from .db import get_db_session, ensure_database
 from .models import Apartment, Photo, POI, ApartmentPOI
-
+from .auth import authenticate_user, create_access_token, verify_token
 
 from .api_models import (
     ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut, PhotoCreate, PhotoUpdate,
     POIOut, POICreate, POIUpdate,
     ApartmentPOIOut, ApartmentPOICreate,
-    DuplicateCheckRequest, DuplicateCheckResponse
+    DuplicateCheckRequest, DuplicateCheckResponse,
+    LoginRequest, LoginResponse
 )
 from .helpers import serialize_apartment, parse_geotext
 
@@ -38,6 +39,7 @@ r = redis.Redis(
     password=REDIS_PASSWORD,
     decode_responses=True,
 )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +62,20 @@ app.add_middleware(
 
 
 
+# --- Authentication ---
+
+@app.post("/login", response_model=LoginResponse)
+def login(credentials: LoginRequest):
+    """Logowanie użytkownika. Zwraca JWT token."""
+    if not authenticate_user(credentials.username, credentials.password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password"
+        )
+    access_token = create_access_token(data={"sub": credentials.username})
+    return LoginResponse(access_token=access_token)
+
+
 # --- CRUD: Apartments ---
 
 @app.get("/apartments", response_model=List[ApartmentOut])
@@ -70,7 +86,8 @@ def list_apartments(
     min_footage: Optional[float] = None,
     skip: int = 0,
     limit: int = 100,
-    db: Session = Depends(get_db_session)
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
 ):
     """
     List apartments with optional filtering.
@@ -132,7 +149,7 @@ def list_apartments(
 
 
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
-def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
+def get_apartment(apartment_id: int, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     row = (
         db.query(Apartment, func.ST_AsText(Apartment.geolocation).label("geotext"))
         .options(
@@ -158,7 +175,11 @@ def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
     return serialize_apartment(apt, geotext, photos=photos, pois=pois)
 
 @app.post("/apartments", response_model=ApartmentOut, status_code=201)
-def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_session)):
+def create_apartment(
+    payload: ApartmentCreate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     from .models import ApartmentStyle
     
     data = payload.model_dump(exclude={"geolocation", "style"})
@@ -180,7 +201,12 @@ def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_sess
 
 
 @app.put("/apartments/{apartment_id}", response_model=ApartmentOut)
-def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = Depends(get_db_session)):
+def update_apartment(
+    apartment_id: int,
+    payload: ApartmentUpdate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     from .models import ApartmentStyle
     
     obj = db.get(Apartment, apartment_id)
@@ -221,7 +247,11 @@ def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = 
 
 
 @app.delete("/apartments/{apartment_id}", status_code=204)
-def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
+def delete_apartment(
+    apartment_id: int,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     obj = db.get(Apartment, apartment_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Apartment not found")
@@ -231,7 +261,11 @@ def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/apartments/duplicates/check", response_model=DuplicateCheckResponse)
-def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Depends(get_db_session)):
+def check_apartment_duplicates(
+    payload: DuplicateCheckRequest,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     result = db.execute(text("SELECT COUNT(*) FROM spatial_ref_sys WHERE srid = 4326;"))
     if result.scalar() == 0:
         db.execute(text("""
@@ -312,12 +346,12 @@ def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Dep
 
 # --- CRUD: Photos ---
 @app.get("/photos", response_model=List[PhotoOut])
-def list_photos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session)):
+def list_photos(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     return db.query(Photo).offset(skip).limit(limit).all()
 
 
 @app.get("/photos/{photo_id}", response_model=PhotoOut)
-def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
+def get_photo(photo_id: int, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
@@ -325,7 +359,11 @@ def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/photos", response_model=PhotoOut, status_code=201)
-def create_photo(payload: PhotoCreate, db: Session = Depends(get_db_session)):
+def create_photo(
+    payload: PhotoCreate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     """Create a new photo with a link."""
     from .models import ApartmentStyle, RoomType, RoomStyle
     
@@ -370,6 +408,7 @@ def update_photo(
     photo_id: int,
     payload: PhotoUpdate,
     db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
 ):
     """Update photo link and/or style."""
     from .models import ApartmentStyle, RoomType, RoomStyle
@@ -420,7 +459,11 @@ def update_photo(
 
 
 @app.delete("/photos/{photo_id}", status_code=204)
-def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
+def delete_photo(
+    photo_id: int,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
@@ -431,7 +474,7 @@ def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
 
 # --- CRUD: POIs ---
 @app.get("/pois", response_model=List[POIOut])
-def list_pois(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session)):
+def list_pois(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     rows = db.query(POI, func.ST_AsText(POI.geolocation).label("geotext")).offset(skip).limit(limit).all()
     result = []
     for poi, geotext in rows:
@@ -444,7 +487,7 @@ def list_pois(skip: int = 0, limit: int = 100, db: Session = Depends(get_db_sess
 
 
 @app.get("/pois/{poi_id}", response_model=POIOut)
-def get_poi(poi_id: int, db: Session = Depends(get_db_session)):
+def get_poi(poi_id: int, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     row = db.query(POI, func.ST_AsText(POI.geolocation).label("geotext")).filter(POI.id == poi_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="POI not found")
@@ -457,7 +500,11 @@ def get_poi(poi_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/pois", response_model=POIOut, status_code=201)
-def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
+def create_poi(
+    payload: POICreate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     from .models import POICategory
     
     try:
@@ -481,7 +528,12 @@ def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
 
 
 @app.put("/pois/{poi_id}", response_model=POIOut)
-def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_session)):
+def update_poi(
+    poi_id: int,
+    payload: POIUpdate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     from .models import POICategory
     
     poi = db.get(POI, poi_id)
@@ -507,7 +559,11 @@ def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_ses
 
 
 @app.delete("/pois/{poi_id}", status_code=204)
-def delete_poi(poi_id: int, db: Session = Depends(get_db_session)):
+def delete_poi(
+    poi_id: int,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     poi = db.get(POI, poi_id)
     if not poi:
         raise HTTPException(status_code=404, detail="POI not found")
@@ -518,7 +574,7 @@ def delete_poi(poi_id: int, db: Session = Depends(get_db_session)):
 
 # --- CRUD: Apartment Best POIs ---
 @app.get("/apartments/{apartment_id}/pois", response_model=List[ApartmentPOIOut])
-def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session)):
+def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
     apartment = db.get(Apartment, apartment_id)
     if not apartment:
         raise HTTPException(status_code=404, detail="Apartment not found")
@@ -544,7 +600,12 @@ def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session)
 
 
 @app.post("/apartments/{apartment_id}/pois", response_model=ApartmentPOIOut, status_code=201)
-def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Session = Depends(get_db_session)):
+def add_apartment_poi(
+    apartment_id: int,
+    payload: ApartmentPOICreate,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     apartment = db.get(Apartment, apartment_id)
     if not apartment:
         raise HTTPException(status_code=404, detail="Apartment not found")
@@ -583,7 +644,12 @@ def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Sessio
 
 
 @app.delete("/apartments/{apartment_id}/pois/{poi_id}", status_code=204)
-def remove_apartment_poi(apartment_id: int, poi_id: int, db: Session = Depends(get_db_session)):
+def remove_apartment_poi(
+    apartment_id: int,
+    poi_id: int,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token)
+):
     rel = db.query(ApartmentPOI).filter(
         ApartmentPOI.apartment_id == apartment_id,
         ApartmentPOI.poi_id == poi_id
