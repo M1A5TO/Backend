@@ -131,6 +131,16 @@ def list_apartments(
     return result
 
 
+@app.get("/apartments/cities", response_model=List[str])
+def list_apartment_cities(db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
+    """
+    Get all unique cities from apartments table.
+    """
+    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
+    cities = [row[0] for row in query.all()]
+    return cities
+
+
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
 def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
     row = (

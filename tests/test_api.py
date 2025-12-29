@@ -548,6 +548,37 @@ def test_apartment_list_filtering(client):
         client.delete(f"/apartments/{apt_id}")
 
 
+def test_apartment_cities_endpoint(client):
+    """Test endpoint /apartments/cities"""
+    # Utwórz kilka mieszkań z różnymi miastami
+    cities = ["Warsaw", "Krakow", "Gdansk", "Warsaw"]  # Warsaw dwa razy, aby sprawdzić distinct
+    apt_ids = []
+    for i, city in enumerate(cities):
+        payload = {
+            "source_website": "otodom",
+            "source_id": f"C{i}",
+            "source_url": f"http://example.com/c{i}",
+            "city": city,
+            "price": 2000.0,
+            "footage": 50.0
+        }
+        r = client.post("/apartments", json=payload)
+        assert r.status_code == 201
+        apt_ids.append(r.json()["id"])
+
+    # Pobierz miasta
+    r = client.get("/apartments/cities")
+    assert r.status_code == 200
+    result_cities = r.json()
+    assert isinstance(result_cities, list)
+    assert set(result_cities) == {"Gdansk", "Krakow", "Warsaw"}  # distinct, sorted
+    assert result_cities == sorted(result_cities)  # posortowane
+
+    # Cleanup
+    for apt_id in apt_ids:
+        client.delete(f"/apartments/{apt_id}")
+
+
 def test_apartment_not_found_errors(client):
     """Test błędów 404 dla nieistniejących zasobów"""
     # GET nieistniejącego apartment
