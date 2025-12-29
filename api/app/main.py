@@ -130,16 +130,11 @@ def list_apartments(
         result.append(serialize_apartment(apt, geotext, photos=photos, pois=pois))
     return result
 
-
-@app.get("/apartments/cities", response_model=List[str])
+@app.get("/apartments/cities", response_model=List[CityOut])
 def list_apartment_cities(db: Session = Depends(get_db_session), username: str = Depends(verify_token)):
-    """
-    Get all unique cities from apartments table.
-    """
     query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
     cities = [row[0] for row in query.all()]
-    return cities
-
+    return [{"city": city} for city in cities]
 
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
 def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
@@ -603,4 +598,3 @@ def remove_apartment_poi(apartment_id: int, poi_id: int, db: Session = Depends(g
     db.delete(rel)
     db.commit()
     return None
-

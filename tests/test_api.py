@@ -551,7 +551,7 @@ def test_apartment_list_filtering(client):
 def test_apartment_cities_endpoint(client):
     """Test endpoint /apartments/cities"""
     # Utwórz kilka mieszkań z różnymi miastami
-    cities = ["Warsaw", "Krakow", "Gdansk", "Warsaw"]  # Warsaw dwa razy, aby sprawdzić distinct
+    cities = ["Warsaw", "Krakow", "Gdansk", "Warsaw"]
     apt_ids = []
     for i, city in enumerate(cities):
         payload = {
@@ -571,8 +571,10 @@ def test_apartment_cities_endpoint(client):
     assert r.status_code == 200
     result_cities = r.json()
     assert isinstance(result_cities, list)
-    assert set(result_cities) == {"Gdansk", "Krakow", "Warsaw"}  # distinct, sorted
-    assert result_cities == sorted(result_cities)  # posortowane
+    assert all(isinstance(item, dict) and "city" in item for item in result_cities)
+    cities_list = [item["city"] for item in result_cities]
+    assert set(cities_list) == {"Gdansk", "Krakow", "Warsaw"}
+    assert cities_list == sorted(cities_list)
 
     # Cleanup
     for apt_id in apt_ids:
