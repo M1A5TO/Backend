@@ -68,6 +68,7 @@ def list_apartments(
     profile: Optional[str] = None,
     max_price: Optional[float] = None,
     min_footage: Optional[float] = None,
+    sort_by: str = "profile",
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db_session)
@@ -79,6 +80,7 @@ def list_apartments(
     - **profile**: Filter by user profile (student, single, dog_owner, family, universal)
     - **max_price**: Maximum price filter
     - **min_footage**: Minimum footage (m²) filter
+    - **sort_by**: Sort order (profile, price_desc, price_asc, footage_desc, footage_asc). Default: profile
     - **skip**: Number of records to skip (pagination)
     - **limit**: Maximum number of records to return
     """
@@ -96,22 +98,51 @@ def list_apartments(
     if min_footage is not None:
         query = query.filter(Apartment.footage >= min_footage)
 
-    if profile:
-        profile_lower = profile.lower()
-        if profile_lower == "student":
-            query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
-        elif profile_lower == "single":
-            query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
-        elif profile_lower == "dog_owner":
-            query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
-        elif profile_lower == "family":
-            query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
-        elif profile_lower == "universal":
-            query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+    # Sorting
+    sort_by_lower = sort_by.lower()
+    if sort_by_lower == "profile":
+        if profile:
+            profile_lower = profile.lower()
+            if profile_lower == "student":
+                query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
+            elif profile_lower == "single":
+                query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
+            elif profile_lower == "dog_owner":
+                query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
+            elif profile_lower == "family":
+                query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
+            elif profile_lower == "universal":
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+            else:
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
         else:
             query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+    elif sort_by_lower == "price_desc":
+        query = query.order_by(Apartment.price.desc().nulls_last())
+    elif sort_by_lower == "price_asc":
+        query = query.order_by(Apartment.price.asc().nulls_last())
+    elif sort_by_lower == "footage_desc":
+        query = query.order_by(Apartment.footage.desc().nulls_last())
+    elif sort_by_lower == "footage_asc":
+        query = query.order_by(Apartment.footage.asc().nulls_last())
     else:
-        query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+        # Default to profile
+        if profile:
+            profile_lower = profile.lower()
+            if profile_lower == "student":
+                query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
+            elif profile_lower == "single":
+                query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
+            elif profile_lower == "dog_owner":
+                query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
+            elif profile_lower == "family":
+                query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
+            elif profile_lower == "universal":
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+            else:
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+        else:
+            query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
 
     rows = query.offset(skip).limit(limit).all()
     
