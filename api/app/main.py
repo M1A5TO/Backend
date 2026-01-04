@@ -83,14 +83,6 @@ def count_apartments(
 
     return {"count": int(query.scalar() or 0)}
 
-
-@app.get("/apartments/cities", response_model=List[CityOut])
-def list_apartment_cities(db: Session = Depends(get_db_session)):
-    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
-    cities = [row[0] for row in query.all()]
-    return [{"city": city} for city in cities]
-
-
 @app.get("/apartments/citiesui", response_model=List[CityOut])
 def list_apartment_cities_ui(
     prefix: Optional[str] = None,
@@ -216,6 +208,12 @@ def list_apartments(
             pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo, "time_to_poi": rel.time_to_poi})
         result.append(serialize_apartment(apt, geotext, photos=photos, pois=pois))
     return result
+
+@app.get("/apartments/cities", response_model=List[CityOut])	
+def list_apartment_cities(db: Session = Depends(get_db_session)):
+    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)	
+    cities = [row[0] for row in query.all()]	
+    return [{"city": city} for city in cities]
 
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
 def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
