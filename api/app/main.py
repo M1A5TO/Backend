@@ -59,6 +59,65 @@ app.add_middleware(
 
 # --- CRUD: Apartments ---
 
+@app.get("/apartments/count")
+def count_apartments(
+    city: Optional[str] = None,
+    max_price: Optional[float] = None,
+    min_footage: Optional[float] = None,
+    db: Session = Depends(get_db_session),
+):
+    """Return number of apartments matching filters.
+
+    Mirrors the filtering part of GET /apartments but returns only a count.
+    """
+    query = db.query(func.count(Apartment.id))
+
+    if city:
+        query = query.filter(Apartment.city.ilike(f"%{city}%"))
+
+    if max_price is not None:
+        query = query.filter(Apartment.price <= max_price)
+
+    if min_footage is not None:
+        query = query.filter(Apartment.footage >= min_footage)
+
+    return {"count": int(query.scalar() or 0)}
+
+
+@app.get("/apartments/cities", response_model=List[CityOut])
+def list_apartment_cities(db: Session = Depends(get_db_session)):
+    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
+    cities = [row[0] for row in query.all()]
+    return [{"city": city} for city in cities]
+
+
+@app.get("/apartments/citiesui", response_model=List[CityOut])
+def list_apartment_cities_ui(
+    q: Optional[str] = None,
+    db: Session = Depends(get_db_session),
+):
+    """UI helper endpoint: distinct city names sorted case-insensitively.
+
+    - **q**: optional substring filter (case-insensitive)
+
+    Suggestions included:
+    - removes empty/whitespace-only values
+    - sorts case-insensitively for stable UI ordering
+    """
+    query = (
+        db.query(Apartment.city)
+        .distinct()
+        .filter(Apartment.city.isnot(None))
+        .filter(func.length(func.trim(Apartment.city)) > 0)
+    )
+
+    if q:
+        query = query.filter(Apartment.city.ilike(f"%{q}%"))
+
+    rows = query.order_by(func.lower(Apartment.city)).all()
+    return [{"city": row[0]} for row in rows]
+
+
 @app.get("/apartments", response_model=List[ApartmentOut])
 def list_apartments(
     city: Optional[str] = None,
@@ -157,12 +216,6 @@ def list_apartments(
             pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo, "time_to_poi": rel.time_to_poi})
         result.append(serialize_apartment(apt, geotext, photos=photos, pois=pois))
     return result
-
-@app.get("/apartments/cities", response_model=List[CityOut])
-def list_apartment_cities(db: Session = Depends(get_db_session)):
-    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
-    cities = [row[0] for row in query.all()]
-    return [{"city": city} for city in cities]
 
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
 def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
