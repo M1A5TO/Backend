@@ -188,4 +188,7 @@ class ApartmentPOIOut(BaseModel):
     time_to_poi: Optional[int] = None
     poi: Optional[POIOut] = None
 
+class CityOut(BaseModel):
+    city: str
+
     model_config = ConfigDict(from_attributes=True)
