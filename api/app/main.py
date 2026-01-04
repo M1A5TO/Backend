@@ -78,6 +78,32 @@ def login(credentials: LoginRequest):
 
 # --- CRUD: Apartments ---
 
+@app.get("/apartments/count")
+def count_apartments(
+    city: Optional[str] = None,
+    max_price: Optional[float] = None,
+    min_footage: Optional[float] = None,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token),
+):
+    """Return number of apartments matching filters.
+
+    This mirrors the filtering part of GET /apartments but returns only a count.
+    """
+    query = db.query(func.count(Apartment.id))
+
+    if city:
+        query = query.filter(Apartment.city.ilike(f"%{city}%"))
+
+    if max_price is not None:
+        query = query.filter(Apartment.price <= max_price)
+
+    if min_footage is not None:
+        query = query.filter(Apartment.footage >= min_footage)
+
+    return {"count": int(query.scalar() or 0)}
+
+
 @app.get("/apartments", response_model=List[ApartmentOut])
 def list_apartments(
     city: Optional[str] = None,
