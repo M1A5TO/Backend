@@ -2,14 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN curl -fsSL https://tailscale.com/install.sh | sh
 
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY ./app ./app
-
-RUN mkdir -p /media/photos
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
