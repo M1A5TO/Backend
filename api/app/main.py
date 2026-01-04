@@ -22,7 +22,7 @@ from .api_models import (
     ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut, PhotoCreate, PhotoUpdate,
     POIOut, POICreate, POIUpdate,
     ApartmentPOIOut, ApartmentPOICreate,
-    DuplicateCheckRequest, DuplicateCheckResponse, CityOut
+    DuplicateCheckRequest, DuplicateCheckResponse, CityOut, ApartmentExistsResponse
 )
 from .helpers import serialize_apartment, parse_geotext
 
@@ -189,6 +189,28 @@ def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
         cat_val = poi.category.value if hasattr(poi.category, "value") else str(poi.category)
         pois.append({"id": poi.id, "category": cat_val, "geolocation": poi_geo})
     return serialize_apartment(apt, geotext, photos=photos, pois=pois)
+
+
+@app.get("/apartments/exists", response_model=ApartmentExistsResponse)
+def apartment_exists(
+    source_website: str,
+    source_id: str,
+    db: Session = Depends(get_db_session),
+):
+    """Sprawdź, czy istnieje mieszkanie o zadanym (source_website, source_id)."""
+    row = (
+        db.query(Apartment.id)
+        .filter(
+            Apartment.source_website == source_website,
+            Apartment.source_id == source_id,
+        )
+        .first()
+    )
+    if not row:
+        return ApartmentExistsResponse(exists=False, id=None)
+    (apt_id,) = row
+    return ApartmentExistsResponse(exists=True, id=apt_id)
+
 
 @app.post("/apartments", response_model=ApartmentOut, status_code=201)
 def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_session)):

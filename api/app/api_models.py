@@ -45,6 +45,12 @@ class DuplicateCheckResponse(BaseModel):
     matches: List["ApartmentOut"]
 
 
+class ApartmentExistsResponse(BaseModel):
+    """Informacja czy mieszkanie o zadanym source_website + source_id istnieje w bazie."""
+    exists: bool
+    id: Optional[int] = None
+
+
 # --- Schemas ---
 class ApartmentBase(BaseModel):
     source_website: str
