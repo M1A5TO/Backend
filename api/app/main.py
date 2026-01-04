@@ -78,6 +78,39 @@ def login(credentials: LoginRequest):
 
 # --- CRUD: Apartments ---
 
+@app.get("/apartments/cities")
+def list_apartment_cities(
+    q: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: Session = Depends(get_db_session),
+    username: str = Depends(verify_token),
+):
+    """Return distinct city names available in apartments.
+
+    - **q**: optional substring filter (case-insensitive)
+    - **skip/limit**: pagination
+    """
+    query = (
+        db.query(Apartment.city)
+        .filter(Apartment.city.isnot(None))
+        .filter(func.length(func.trim(Apartment.city)) > 0)
+    )
+
+    if q:
+        query = query.filter(Apartment.city.ilike(f"%{q}%"))
+
+    rows = (
+        query.distinct()
+        .order_by(func.lower(Apartment.city))
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+
+    return [r[0] for r in rows]
+
+
 @app.get("/apartments/count")
 def count_apartments(
     city: Optional[str] = None,
