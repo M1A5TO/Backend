@@ -93,12 +93,12 @@ def list_apartment_cities(db: Session = Depends(get_db_session)):
 
 @app.get("/apartments/citiesui", response_model=List[CityOut])
 def list_apartment_cities_ui(
-    q: Optional[str] = None,
+    prefix: Optional[str] = None,
     db: Session = Depends(get_db_session),
 ):
     """UI helper endpoint: distinct city names sorted case-insensitively.
 
-    - **q**: optional substring filter (case-insensitive)
+    - **prefix**: optional case-insensitive prefix filter (useful for autocomplete)
 
     Suggestions included:
     - removes empty/whitespace-only values
@@ -111,8 +111,8 @@ def list_apartment_cities_ui(
         .filter(func.length(func.trim(Apartment.city)) > 0)
     )
 
-    if q:
-        query = query.filter(Apartment.city.ilike(f"%{q}%"))
+    if prefix:
+        query = query.filter(Apartment.city.ilike(f"{prefix}%"))
 
     rows = query.order_by(func.lower(Apartment.city)).all()
     return [{"city": row[0]} for row in rows]
