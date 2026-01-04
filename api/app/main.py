@@ -18,12 +18,11 @@ if env_path.exists():
 from .db import get_db_session, ensure_database
 from .models import Apartment, Photo, POI, ApartmentPOI
 
-
 from .api_models import (
     ApartmentOut, ApartmentCreate, ApartmentUpdate, PhotoOut, PhotoCreate, PhotoUpdate,
     POIOut, POICreate, POIUpdate,
     ApartmentPOIOut, ApartmentPOICreate,
-    DuplicateCheckRequest, DuplicateCheckResponse, ApartmentExistsResponse
+    DuplicateCheckRequest, DuplicateCheckResponse, CityOut, ApartmentExistsResponse
 )
 from .helpers import serialize_apartment, parse_geotext
 
@@ -58,8 +57,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-
 # --- CRUD: Apartments ---
 
 @app.get("/apartments", response_model=List[ApartmentOut])
@@ -68,6 +65,7 @@ def list_apartments(
     profile: Optional[str] = None,
     max_price: Optional[float] = None,
     min_footage: Optional[float] = None,
+    sort_by: str = "profile",
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db_session)
@@ -79,6 +77,7 @@ def list_apartments(
     - **profile**: Filter by user profile (student, single, dog_owner, family, universal)
     - **max_price**: Maximum price filter
     - **min_footage**: Minimum footage (m²) filter
+    - **sort_by**: Sort order (profile, price_desc, price_asc, footage_desc, footage_asc). Default: profile
     - **skip**: Number of records to skip (pagination)
     - **limit**: Maximum number of records to return
     """
@@ -96,22 +95,51 @@ def list_apartments(
     if min_footage is not None:
         query = query.filter(Apartment.footage >= min_footage)
 
-    if profile:
-        profile_lower = profile.lower()
-        if profile_lower == "student":
-            query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
-        elif profile_lower == "single":
-            query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
-        elif profile_lower == "dog_owner":
-            query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
-        elif profile_lower == "family":
-            query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
-        elif profile_lower == "universal":
-            query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+    # Sorting
+    sort_by_lower = sort_by.lower()
+    if sort_by_lower == "profile":
+        if profile:
+            profile_lower = profile.lower()
+            if profile_lower == "student":
+                query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
+            elif profile_lower == "single":
+                query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
+            elif profile_lower == "dog_owner":
+                query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
+            elif profile_lower == "family":
+                query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
+            elif profile_lower == "universal":
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+            else:
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
         else:
             query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+    elif sort_by_lower == "price_desc":
+        query = query.order_by(Apartment.price.desc().nulls_last())
+    elif sort_by_lower == "price_asc":
+        query = query.order_by(Apartment.price.asc().nulls_last())
+    elif sort_by_lower == "footage_desc":
+        query = query.order_by(Apartment.footage.desc().nulls_last())
+    elif sort_by_lower == "footage_asc":
+        query = query.order_by(Apartment.footage.asc().nulls_last())
     else:
-        query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+        # Default to profile
+        if profile:
+            profile_lower = profile.lower()
+            if profile_lower == "student":
+                query = query.order_by(Apartment.student_attractiveness.desc().nulls_last())
+            elif profile_lower == "single":
+                query = query.order_by(Apartment.single_attractiveness.desc().nulls_last())
+            elif profile_lower == "dog_owner":
+                query = query.order_by(Apartment.dog_owner_attractiveness.desc().nulls_last())
+            elif profile_lower == "family":
+                query = query.order_by(Apartment.family_attractiveness.desc().nulls_last())
+            elif profile_lower == "universal":
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+            else:
+                query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
+        else:
+            query = query.order_by(Apartment.universal_attractiveness.desc().nulls_last())
 
     rows = query.offset(skip).limit(limit).all()
     
@@ -130,6 +158,11 @@ def list_apartments(
         result.append(serialize_apartment(apt, geotext, photos=photos, pois=pois))
     return result
 
+@app.get("/apartments/cities", response_model=List[CityOut])
+def list_apartment_cities(db: Session = Depends(get_db_session)):
+    query = db.query(Apartment.city).distinct().filter(Apartment.city.isnot(None)).order_by(Apartment.city)
+    cities = [row[0] for row in query.all()]
+    return [{"city": city} for city in cities]
 
 @app.get("/apartments/{apartment_id}", response_model=ApartmentOut)
 def get_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
@@ -202,7 +235,11 @@ def create_apartment(payload: ApartmentCreate, db: Session = Depends(get_db_sess
 
 
 @app.put("/apartments/{apartment_id}", response_model=ApartmentOut)
-def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = Depends(get_db_session)):
+def update_apartment(
+    apartment_id: int,
+    payload: ApartmentUpdate,
+    db: Session = Depends(get_db_session)
+):
     from .models import ApartmentStyle
     
     obj = db.get(Apartment, apartment_id)
@@ -243,7 +280,10 @@ def update_apartment(apartment_id: int, payload: ApartmentUpdate, db: Session = 
 
 
 @app.delete("/apartments/{apartment_id}", status_code=204)
-def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
+def delete_apartment(
+    apartment_id: int,
+    db: Session = Depends(get_db_session)
+):
     obj = db.get(Apartment, apartment_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Apartment not found")
@@ -253,7 +293,10 @@ def delete_apartment(apartment_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/apartments/duplicates/check", response_model=DuplicateCheckResponse)
-def check_apartment_duplicates(payload: DuplicateCheckRequest, db: Session = Depends(get_db_session)):
+def check_apartment_duplicates(
+    payload: DuplicateCheckRequest,
+    db: Session = Depends(get_db_session)
+):
     result = db.execute(text("SELECT COUNT(*) FROM spatial_ref_sys WHERE srid = 4326;"))
     if result.scalar() == 0:
         db.execute(text("""
@@ -347,7 +390,10 @@ def get_photo(photo_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/photos", response_model=PhotoOut, status_code=201)
-def create_photo(payload: PhotoCreate, db: Session = Depends(get_db_session)):
+def create_photo(
+    payload: PhotoCreate,
+    db: Session = Depends(get_db_session)
+):
     """Create a new photo with a link."""
     from .models import ApartmentStyle, RoomType, RoomStyle
     
@@ -391,7 +437,7 @@ def create_photo(payload: PhotoCreate, db: Session = Depends(get_db_session)):
 def update_photo(
     photo_id: int,
     payload: PhotoUpdate,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db_session)
 ):
     """Update photo link and/or style."""
     from .models import ApartmentStyle, RoomType, RoomStyle
@@ -442,7 +488,10 @@ def update_photo(
 
 
 @app.delete("/photos/{photo_id}", status_code=204)
-def delete_photo(photo_id: int, db: Session = Depends(get_db_session)):
+def delete_photo(
+    photo_id: int,
+    db: Session = Depends(get_db_session)
+):
     obj = db.get(Photo, photo_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Photo not found")
@@ -479,7 +528,10 @@ def get_poi(poi_id: int, db: Session = Depends(get_db_session)):
 
 
 @app.post("/pois", response_model=POIOut, status_code=201)
-def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
+def create_poi(
+    payload: POICreate,
+    db: Session = Depends(get_db_session)
+):
     from .models import POICategory
     
     try:
@@ -503,7 +555,11 @@ def create_poi(payload: POICreate, db: Session = Depends(get_db_session)):
 
 
 @app.put("/pois/{poi_id}", response_model=POIOut)
-def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_session)):
+def update_poi(
+    poi_id: int,
+    payload: POIUpdate,
+    db: Session = Depends(get_db_session)
+):
     from .models import POICategory
     
     poi = db.get(POI, poi_id)
@@ -529,7 +585,10 @@ def update_poi(poi_id: int, payload: POIUpdate, db: Session = Depends(get_db_ses
 
 
 @app.delete("/pois/{poi_id}", status_code=204)
-def delete_poi(poi_id: int, db: Session = Depends(get_db_session)):
+def delete_poi(
+    poi_id: int,
+    db: Session = Depends(get_db_session)
+):
     poi = db.get(POI, poi_id)
     if not poi:
         raise HTTPException(status_code=404, detail="POI not found")
@@ -566,7 +625,11 @@ def list_apartment_pois(apartment_id: int, db: Session = Depends(get_db_session)
 
 
 @app.post("/apartments/{apartment_id}/pois", response_model=ApartmentPOIOut, status_code=201)
-def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Session = Depends(get_db_session)):
+def add_apartment_poi(
+    apartment_id: int,
+    payload: ApartmentPOICreate,
+    db: Session = Depends(get_db_session)
+):
     apartment = db.get(Apartment, apartment_id)
     if not apartment:
         raise HTTPException(status_code=404, detail="Apartment not found")
@@ -605,7 +668,11 @@ def add_apartment_poi(apartment_id: int, payload: ApartmentPOICreate, db: Sessio
 
 
 @app.delete("/apartments/{apartment_id}/pois/{poi_id}", status_code=204)
-def remove_apartment_poi(apartment_id: int, poi_id: int, db: Session = Depends(get_db_session)):
+def remove_apartment_poi(
+    apartment_id: int,
+    poi_id: int,
+    db: Session = Depends(get_db_session)
+):
     rel = db.query(ApartmentPOI).filter(
         ApartmentPOI.apartment_id == apartment_id,
         ApartmentPOI.poi_id == poi_id
@@ -615,4 +682,3 @@ def remove_apartment_poi(apartment_id: int, poi_id: int, db: Session = Depends(g
     db.delete(rel)
     db.commit()
     return None
-
