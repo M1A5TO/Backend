@@ -9,6 +9,8 @@ GRANT ALL PRIVILEGES ON DATABASE app_db TO root;
 \c app_user
 
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
 
 INSERT INTO spatial_ref_sys (srid, auth_name, auth_srid, proj4text, srtext)
 VALUES (

@@ -138,8 +138,10 @@ def list_apartments(
     )
     
     if city:
-        query = query.filter(Apartment.city.ilike(f"%{city}%"))
-    
+        query = query.filter(
+            func.unaccent(func.lower(Apartment.city)) ==
+            func.unaccent(func.lower(city))
+        )
     if max_price is not None:
         query = query.filter(Apartment.price <= max_price)
     
