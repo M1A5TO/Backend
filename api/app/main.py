@@ -87,7 +87,7 @@ def list_apartments(
     )
     
     if city:
-        query = query.filter(Apartment.city.ilike(f"%{city}%"))
+        query = query.filter(Apartment.city.ilike(f"{city}"))
     
     if max_price is not None:
         query = query.filter(Apartment.price <= max_price)
