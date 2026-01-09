@@ -97,16 +97,19 @@ def list_apartment_cities_ui(
     - sorts case-insensitively for stable UI ordering
     """
     query = (
-        db.query(Apartment.city)
-        .distinct()
+        db.query(
+            Apartment.city,
+            func.lower(Apartment.city).label("city_lower"),
+        )
         .filter(Apartment.city.isnot(None))
         .filter(func.length(func.trim(Apartment.city)) > 0)
+        .distinct()
     )
 
     if prefix:
         query = query.filter(Apartment.city.ilike(f"{prefix}%"))
 
-    rows = query.order_by(func.lower(Apartment.city)).all()
+    rows = query.order_by("city_lower").all()
     return [{"city": row[0]} for row in rows]
 
 
